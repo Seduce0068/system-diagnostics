@@ -71,4 +71,55 @@ impl Diagnostic for LocalGatewayPingDiagnostic {
             gateway_ip, interface, loss, rtt
         ))
     }
+    fn report(&self) -> serde_json::Value {
+        let mut gateway = "unknown".to_string();
+        let mut interface = "unknown".to_string();
+        let mut loss = "100%".to_string();
+        let mut rtt_min = None;
+        let mut rtt_avg = None;
+        let mut rtt_max = None;
+        let mut rtt_mdev = None;
+        
+        if let Ok((iface, gw_ip)) = get_default_gateway() {
+            interface = iface;
+            gateway = gw_ip;
+            if let Ok(output) = Command::new("ping")
+                .args(&["-c", "3", "-W", "1", "-I", &interface, &gateway])
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if line.contains("packet loss") {
+                        if let Some(pct_idx) = line.find("%") {
+                            let start = line[..pct_idx].rfind(' ').unwrap_or(0);
+                            loss = line[start..pct_idx+1].trim().to_string();
+                        }
+                    } else if line.starts_with("rtt min/avg/max") {
+                        if let Some(vals) = line.split('=').nth(1) {
+                            let rtt_vals: Vec<&str> = vals.trim().split('/').collect();
+                            if rtt_vals.len() == 4 {
+                                rtt_min = rtt_vals[0].parse::<f64>().ok();
+                                rtt_avg = rtt_vals[1].parse::<f64>().ok();
+                                rtt_max = rtt_vals[2].parse::<f64>().ok();
+                                rtt_mdev = rtt_vals[3].split(' ').next().and_then(|v| v.parse::<f64>().ok());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        serde_json::json!({
+            "name": self.name(),
+            "gateway": gateway,
+            "interface": interface,
+            "packet_loss": loss,
+            "rtt_ms": {
+                "min": rtt_min,
+                "avg": rtt_avg,
+                "max": rtt_max,
+                "mdev": rtt_mdev
+            }
+        })
+    }
 }

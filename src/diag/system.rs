@@ -43,4 +43,37 @@ impl Diagnostic for UptimeLoadAvgDiagnostic {
             days, hours, minutes, load_5, load_15, load_status
         ))
     }
+    fn report(&self) -> serde_json::Value {
+        let uptime_secs: f64 = fs::read_to_string("/proc/uptime")
+            .ok()
+            .and_then(|raw| raw.split_whitespace().next().and_then(|s| s.parse().ok()))
+            .unwrap_or(0.0);
+            
+        let loadavg_raw = fs::read_to_string("/proc/loadavg").unwrap_or_default();
+        let loads: Vec<&str> = loadavg_raw.split_whitespace().collect();
+        let (load_1, load_5, load_15) = if loads.len() >= 3 {
+            (
+                loads[0].parse::<f64>().unwrap_or(0.0),
+                loads[1].parse::<f64>().unwrap_or(0.0),
+                loads[2].parse::<f64>().unwrap_or(0.0),
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+        
+        let cpu_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+            
+        serde_json::json!({
+            "name": self.name(),
+            "uptime_seconds": uptime_secs,
+            "load_avg": {
+                "1min": load_1,
+                "5min": load_5,
+                "15min": load_15
+            },
+            "cpu_cores": cpu_cores
+        })
+    }
 }

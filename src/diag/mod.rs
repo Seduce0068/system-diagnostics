@@ -1,6 +1,7 @@
 pub trait Diagnostic {
     fn name(&self) -> &str;
     fn run(&self) -> anyhow::Result<String>;
+    fn report(&self) -> serde_json::Value;
 }
 
 pub mod system;

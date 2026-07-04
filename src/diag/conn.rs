@@ -84,4 +84,41 @@ impl Diagnostic for ActiveConnectionDiagnostic {
             ))
         }
     }
+    fn report(&self) -> serde_json::Value {
+        let paths = vec!["/proc/net/tcp", "/proc/net/tcp6"];
+        let mut est_count = 0;
+        let mut remote_ips = HashMap::new();
+        
+        for path in paths {
+            if let Ok(content) = fs::read_to_string(path) {
+                for line in content.lines().skip(1) {
+                    let fields: Vec<&str> = line.split_whitespace().collect();
+                    if fields.len() > 3 {
+                        let state = fields[3];
+                        if state == "01" { // ESTABLISHED
+                            est_count += 1;
+                            let remote_addr = fields[2];
+                            if let Some(ip_hex) = remote_addr.split(':').next() {
+                                let ip = self.hex_to_ip(ip_hex);
+                                *remote_ips.entry(ip).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        let mut ip_counts: Vec<(String, usize)> = remote_ips.into_iter().collect();
+        ip_counts.sort_by(|a, b| b.1.cmp(&a.1));
+        let top_dest: Vec<serde_json::Value> = ip_counts.iter()
+            .take(3)
+            .map(|(ip, count)| serde_json::json!({"ip": ip, "count": count}))
+            .collect();
+            
+        serde_json::json!({
+            "name": self.name(),
+            "established_count": est_count,
+            "top_destinations": top_dest
+        })
+    }
 }

@@ -53,4 +53,38 @@ impl Diagnostic for NetworkMTUDiagnostic {
         }
         Ok(format!("推奨MTU (via {}): {}", interface, optimal))
     }
+    fn report(&self) -> serde_json::Value {
+        let interface = get_default_interface().unwrap_or_else(|_| "unknown".to_string());
+        let target = "8.8.8.8";
+        let mut low = 576;
+        let mut high = 1500;
+        let mut optimal = low;
+        
+        // ping check
+        if Command::new("ping").arg("-V").output().is_ok() {
+            while low <= high {
+                let mid = (low + high) / 2;
+                let payload = mid - 28;
+                if let Ok(output) = Command::new("ping")
+                    .args(&["-c", "1", "-W", "1", "-I", &interface, "-s", &payload.to_string(), "-M", "do", target])
+                    .output()
+                {
+                    if output.status.success() {
+                        optimal = mid;
+                        low = mid + 1;
+                    } else {
+                        high = mid - 1;
+                    }
+                } else {
+                    high = mid - 1;
+                }
+            }
+        }
+        
+        serde_json::json!({
+            "name": self.name(),
+            "interface": interface,
+            "optimal_mtu": optimal
+        })
+    }
 }

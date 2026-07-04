@@ -33,4 +33,26 @@ impl Diagnostic for CpuVulnerabilityDiagnostic {
             Ok(status.join(" | "))
         }
     }
+    fn report(&self) -> serde_json::Value {
+        let vulns = vec!["meltdown", "spectre_v1", "spectre_v2", "mds", "l1tf"];
+        let mut statuses = Vec::new();
+        
+        for vuln in vulns {
+            let path = format!("/sys/devices/system/cpu/vulnerabilities/{}", vuln);
+            if let Ok(content) = fs::read_to_string(path) {
+                let text = content.trim();
+                let is_vuln = text.to_lowercase().contains("vulnerable") || text.to_lowercase().contains("susceptible");
+                statuses.push(serde_json::json!({
+                    "vulnerability": vuln,
+                    "status": text,
+                    "is_vulnerable": is_vuln
+                }));
+            }
+        }
+        
+        serde_json::json!({
+            "name": self.name(),
+            "vulnerabilities": statuses
+        })
+    }
 }

@@ -62,4 +62,51 @@ impl Diagnostic for CpuFrequencyDiagnostic {
             cores, avg, min, max, throttle_msg
         ))
     }
+    fn report(&self) -> serde_json::Value {
+        let mut freqs = Vec::new();
+        let mut cores = 0;
+        
+        if let Ok(entries) = fs::read_dir("/sys/devices/system/cpu") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("cpu") && name_str[3..].chars().all(|c| c.is_ascii_digit()) {
+                    cores += 1;
+                    let freq_path = entry.path().join("cpufreq/scaling_cur_freq");
+                    if let Ok(freq_str) = fs::read_to_string(freq_path) {
+                        if let Ok(freq_khz) = freq_str.trim().parse::<u64>() {
+                            freqs.push(freq_khz as f64 / 1000.0 / 1000.0); // GHz
+                        }
+                    }
+                }
+            }
+        }
+        
+        let avg = if freqs.is_empty() { 0.0 } else { freqs.iter().sum::<f64>() / freqs.len() as f64 };
+        let max = if freqs.is_empty() { 0.0 } else { freqs.iter().cloned().fold(f64::NEG_INFINITY, f64::max) };
+        let min = if freqs.is_empty() { 0.0 } else { freqs.iter().cloned().fold(f64::INFINITY, f64::min) };
+        
+        let mut total_throttle_count = 0;
+        if let Ok(entries) = fs::read_dir("/sys/devices/system/cpu") {
+            for entry in entries.flatten() {
+                let path = entry.path().join("thermal_throttle/core_throttle_count");
+                if let Ok(content) = fs::read_to_string(path) {
+                    if let Ok(count) = content.trim().parse::<u64>() {
+                        total_throttle_count += count;
+                    }
+                }
+            }
+        }
+        
+        serde_json::json!({
+            "name": self.name(),
+            "cores": cores,
+            "frequency_ghz": {
+                "avg": avg,
+                "min": min,
+                "max": max
+            },
+            "thermal_throttle_count": total_throttle_count
+        })
+    }
 }

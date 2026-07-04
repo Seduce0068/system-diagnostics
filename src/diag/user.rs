@@ -55,4 +55,46 @@ impl Diagnostic for ActiveUsersSshDiagnostic {
         
         Ok(format!("ログイン中のアクティブユーザー: {}名 | SSH認証失敗数: {}件", user_count, fail_count))
     }
+    fn report(&self) -> serde_json::Value {
+        let who_output = Command::new("who").output();
+        let user_count = match who_output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                stdout.trim().lines().count()
+            }
+            _ => 0,
+        };
+
+        let mut fail_count = 0;
+        let mut auth_check_status = "ok";
+        
+        if is_systemd_available() {
+            if has_journal_permission() {
+                let ssh_log = Command::new("journalctl")
+                    .args(&["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"])
+                    .output();
+                if let Ok(out) = ssh_log {
+                    if out.status.success() {
+                        let stdout = String::from_utf8_lossy(&out.stdout);
+                        for line in stdout.lines() {
+                            if line.contains("Failed password") || line.contains("Invalid user") {
+                                fail_count += 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                auth_check_status = "permission_denied";
+            }
+        } else {
+            auth_check_status = "not_available";
+        }
+
+        serde_json::json!({
+            "name": self.name(),
+            "active_users": user_count,
+            "ssh_auth_failures": fail_count,
+            "ssh_auth_status": auth_check_status
+        })
+    }
 }

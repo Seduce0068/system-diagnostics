@@ -1,0 +1,120 @@
+{
+  "Active Connections": {
+    "established_count": 204,
+    "name": "Active Connections",
+    "top_destinations": [
+      {
+        "count": 75,
+        "ip": "192.168.128.111"
+      },
+      {
+        "count": 21,
+        "ip": "34.128.128.0"
+      },
+      {
+        "count": 12,
+        "ip": "199.232.193.91"
+      }
+    ]
+  },
+  "CPU Freq & Throttle": {
+    "cores": 12,
+    "frequency_ghz": {
+      "avg": 3.9485550000000007,
+      "max": 3.950332,
+      "min": 3.941523
+    },
+    "name": "CPU Freq & Throttle",
+    "thermal_throttle_count": 0
+  },
+  "CPU Vulnerabilities": {
+    "name": "CPU Vulnerabilities",
+    "vulnerabilities": [
+      {
+        "is_vulnerable": false,
+        "status": "Not affected",
+        "vulnerability": "meltdown"
+      },
+      {
+        "is_vulnerable": false,
+        "status": "Mitigation: usercopy/swapgs barriers and __user pointer sanitization",
+        "vulnerability": "spectre_v1"
+      },
+      {
+        "is_vulnerable": false,
+        "status": "Mitigation: Retpolines; IBPB: conditional; STIBP: always-on; RSB filling; PBRSB-eIBRS: Not affected; BHI: Not affected",
+        "vulnerability": "spectre_v2"
+      },
+      {
+        "is_vulnerable": false,
+        "status": "Not affected",
+        "vulnerability": "mds"
+      },
+      {
+        "is_vulnerable": false,
+        "status": "Not affected",
+        "vulnerability": "l1tf"
+      }
+    ]
+  },
+  "DNS Latency": {
+    "dns_servers": [
+      "8.8.8.8",
+      "1.1.1.1"
+    ],
+    "latencies": [
+      {
+        "domain": "google.com",
+        "latency_ms": 49.317156000000004
+      },
+      {
+        "domain": "cloudflare.com",
+        "latency_ms": 64.302574
+      },
+      {
+        "domain": "yahoo.co.jp",
+        "latency_ms": 53.305372
+      }
+    ],
+    "name": "DNS Latency"
+  },
+  "Local Gateway Ping": {
+    "gateway": "192.168.128.1",
+    "interface": "enp4s0",
+    "name": "Local Gateway Ping",
+    "packet_loss": "0%",
+    "rtt_ms": {
+      "avg": 0.938,
+      "max": 1.195,
+      "mdev": 0.211,
+      "min": 0.676
+    }
+  },
+  "Network MTU": {
+    "interface": "enp4s0",
+    "name": "Network MTU",
+    "optimal_mtu": 1280
+  },
+  "Time Sync (NTP)": {
+    "available": true,
+    "name": "Time Sync (NTP)",
+    "ntp_active": true,
+    "synchronized": true
+  },
+  "Uptime & Load": {
+    "cpu_cores": 12,
+    "load_avg": {
+      "15min": 2.33,
+      "1min": 2.4,
+      "5min": 2.77
+    },
+    "name": "Uptime & Load",
+    "uptime_seconds": 148565.15
+  },
+  "Users & SSH Auth": {
+    "active_users": 0,
+    "name": "Users & SSH Auth",
+    "ssh_auth_failures": 0,
+    "ssh_auth_status": "ok"
+  }
+}

@@ -42,4 +42,44 @@ impl Diagnostic for DnsLatencyDiagnostic {
             results.join(", ")
         ))
     }
+    fn report(&self) -> serde_json::Value {
+        use std::net::ToSocketAddrs;
+        use std::time::Instant;
+        
+        let domains = vec!["google.com", "cloudflare.com", "yahoo.co.jp"];
+        let mut domain_latencies = Vec::new();
+        
+        for domain in domains {
+            let start = Instant::now();
+            let host_port = format!("{}:80", domain);
+            let result = match host_port.to_socket_addrs() {
+                Ok(_) => {
+                    let duration = start.elapsed();
+                    Some(duration.as_secs_f64() * 1000.0)
+                }
+                Err(_) => None,
+            };
+            domain_latencies.push(serde_json::json!({
+                "domain": domain,
+                "latency_ms": result
+            }));
+        }
+        
+        let mut dns_servers = Vec::new();
+        if let Ok(resolv) = std::fs::read_to_string("/etc/resolv.conf") {
+            for line in resolv.lines() {
+                if line.starts_with("nameserver") {
+                    if let Some(ns) = line.split_whitespace().nth(1) {
+                        dns_servers.push(ns.to_string());
+                    }
+                }
+            }
+        }
+        
+        serde_json::json!({
+            "name": self.name(),
+            "dns_servers": dns_servers,
+            "latencies": domain_latencies
+        })
+    }
 }
