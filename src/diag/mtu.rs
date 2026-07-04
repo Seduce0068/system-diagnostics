@@ -5,7 +5,7 @@ use serde_json::json;
 
 pub struct NetworkMTUDiagnostic;
 impl Diagnostic for NetworkMTUDiagnostic {
-    fn name(&self) -> &str { "Network MTU" }
+    fn id(&self) -> &str { "network_mtu" }
     fn run(&self) -> Result<DiagnosticData> {
         let interface = get_default_interface().context("Failed to get interface")?;
         let target = "8.8.8.8";
@@ -23,7 +23,7 @@ impl Diagnostic for NetworkMTUDiagnostic {
             let mid = (low + high) / 2;
             let payload = mid - 28;
             let output = Command::new("ping")
-                .args(&["-c", "1", "-W", "1", "-I", &interface, "-s", &payload.to_string(), "-M", "do", target])
+                .args(["-c", "1", "-W", "1", "-I", &interface, "-s", &payload.to_string(), "-M", "do", target])
                 .output()?;
             if output.status.success() {
                 optimal = mid;

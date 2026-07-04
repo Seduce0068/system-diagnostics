@@ -7,7 +7,7 @@ pub struct DiagnosticData {
 }
 
 pub trait Diagnostic {
-    fn name(&self) -> &str;
+    fn id(&self) -> &str;
     fn run(&self) -> Result<DiagnosticData>;
 }
 

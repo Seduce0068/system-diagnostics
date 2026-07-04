@@ -5,7 +5,7 @@ use serde_json::json;
 
 pub struct NtpTimeSyncDiagnostic;
 impl Diagnostic for NtpTimeSyncDiagnostic {
-    fn name(&self) -> &str { "NTP Time Sync" }
+    fn id(&self) -> &str { "ntp_time_sync" }
     fn run(&self) -> Result<DiagnosticData> {
         let mut ntp_active = false;
         let mut synchronized = false;

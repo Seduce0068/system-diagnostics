@@ -5,7 +5,7 @@ use crate::diag::{Diagnostic, DiagnosticData};
 pub struct UptimeLoadAvgDiagnostic;
 
 impl Diagnostic for UptimeLoadAvgDiagnostic {
-    fn name(&self) -> &str { "Uptime & Load" }
+    fn id(&self) -> &str { "system_uptime_load" }
     fn run(&self) -> Result<DiagnosticData> {
         let uptime_raw = fs::read_to_string("/proc/uptime")
             .context("Failed to read /proc/uptime")?;

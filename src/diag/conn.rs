@@ -8,7 +8,7 @@ use serde_json::Value;
 pub struct ActiveConnectionDiagnostic;
 
 impl Diagnostic for ActiveConnectionDiagnostic {
-    fn name(&self) -> &str { "Active Connections" }
+    fn id(&self) -> &str { "active_connections" }
     fn run(&self) -> Result<DiagnosticData> {
         let mut connections = Vec::new();
         for path in &["/proc/net/tcp", "/proc/net/tcp6"] {

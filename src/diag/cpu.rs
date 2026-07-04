@@ -7,7 +7,7 @@ pub struct CpuFrequencyDiagnostic<S: SystemInterface> {
 }
 
 impl<S: SystemInterface> Diagnostic for CpuFrequencyDiagnostic<S> {
-    fn name(&self) -> &str { "CPU Frequency" }
+    fn id(&self) -> &str { "cpu_frequency" }
     fn run(&self) -> Result<DiagnosticData> {
         let cpu_dir = "/sys/devices/system/cpu";
         

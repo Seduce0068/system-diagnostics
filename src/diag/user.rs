@@ -5,7 +5,7 @@ use serde_json::json;
 
 pub struct ActiveUsersSshDiagnostic;
 impl Diagnostic for ActiveUsersSshDiagnostic {
-    fn name(&self) -> &str { "Active SSH Users" }
+    fn id(&self) -> &str { "active_ssh_users" }
     fn run(&self) -> Result<DiagnosticData> {
         let who_output = Command::new("who").output();
         let user_count = match who_output {
@@ -26,7 +26,7 @@ impl Diagnostic for ActiveUsersSshDiagnostic {
             auth_check_status = "permission_denied".to_string();
         } else {
             let ssh_log = Command::new("journalctl")
-                .args(&["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"])
+                .args(["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"])
                 .output();
                 
             if let Ok(out) = ssh_log {
@@ -46,7 +46,7 @@ impl Diagnostic for ActiveUsersSshDiagnostic {
 }
 
 fn has_journal_permission() -> bool {
-    if let Ok(output) = Command::new("journalctl").args(&["-n", "1", "--no-pager"]).output() {
+    if let Ok(output) = Command::new("journalctl").args(["-n", "1", "--no-pager"]).output() {
         output.status.success() && !String::from_utf8_lossy(&output.stderr).contains("No journal files were found")
     } else {
         false

@@ -1,5 +1,5 @@
 [package]
-name = "mtu-diag-tool"
+name = "system-diag-tool"
 version = "0.1.0"
 edition = "2021"
 

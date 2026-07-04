@@ -6,7 +6,7 @@ use serde_json::json;
 pub struct CpuVulnerabilityDiagnostic;
 
 impl Diagnostic for CpuVulnerabilityDiagnostic {
-    fn name(&self) -> &str { "CPU Vulnerability" }
+    fn id(&self) -> &str { "cpu_vulnerability" }
     fn run(&self) -> Result<DiagnosticData> {
         let mut vuln_map = std::collections::HashMap::new();
         let vulns = vec!["meltdown", "spectre_v1", "spectre_v2", "mds", "l1tf"];

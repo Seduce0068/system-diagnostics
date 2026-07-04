@@ -19,6 +19,28 @@ enum Commands {
     Compare { baseline: PathBuf },
 }
 
+fn print_diff(val1: &serde_json::Value, val2: &serde_json::Value, path: String) {
+    if val1 == val2 {
+        return;
+    }
+    match (val1, val2) {
+        (serde_json::Value::Object(map1), serde_json::Value::Object(map2)) => {
+            for key in map1.keys().chain(map2.keys()).collect::<std::collections::HashSet<_>>() {
+                let p = if path.is_empty() { key.to_string() } else { format!("{}.{}", path, key) };
+                match (map1.get(key), map2.get(key)) {
+                    (Some(v1), Some(v2)) => print_diff(v1, v2, p),
+                    (Some(_), None) => println!("Removed: {}", p),
+                    (None, Some(_)) => println!("Added: {}", p),
+                    (None, None) => unreachable!(),
+                }
+            }
+        }
+        (v1, v2) => {
+            println!("Changed: {} ({} -> {})", path, v1, v2);
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -26,8 +48,8 @@ fn main() -> Result<()> {
         Commands::Run => {
             for d in diag::get_all_diagnostics() {
                 match d.run() {
-                    Ok(data) => println!("{}: {}", d.name(), data.readable),
-                    Err(e) => eprintln!("{}: 診断失敗: {}", d.name(), e),
+                    Ok(data) => println!("{}", data.readable),
+                    Err(e) => eprintln!("診断失敗: {}", e),
                 }
             }
         }
@@ -35,7 +57,7 @@ fn main() -> Result<()> {
             let mut snapshot = serde_json::Map::new();
             for d in diag::get_all_diagnostics() {
                 if let Ok(data) = d.run() {
-                    snapshot.insert(d.name().to_string(), data.raw);
+                    snapshot.insert(d.id().to_string(), data.raw);
                 }
             }
             fs::write(path, serde_json::to_string_pretty(&snapshot)?)?;
@@ -47,16 +69,16 @@ fn main() -> Result<()> {
             let mut current = serde_json::Map::new();
             for d in diag::get_all_diagnostics() {
                 if let Ok(data) = d.run() {
-                    current.insert(d.name().to_string(), data.raw);
+                    current.insert(d.id().to_string(), data.raw);
                 }
             }
             
-            // Simple comparison logic
-            if serde_json::Value::Object(current) == baseline_json {
+            let current_json = serde_json::Value::Object(current);
+            if current_json == baseline_json {
                 println!("No drift detected.");
             } else {
                 println!("Drift detected!");
-                // Here we could implement more detailed diffing
+                print_diff(&baseline_json, &current_json, "".to_string());
             }
         }
     }

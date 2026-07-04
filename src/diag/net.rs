@@ -5,7 +5,7 @@ use serde_json::json;
 
 pub struct LocalGatewayPingDiagnostic;
 impl Diagnostic for LocalGatewayPingDiagnostic {
-    fn name(&self) -> &str { "Local Gateway Ping" }
+    fn id(&self) -> &str { "local_gateway_ping" }
     fn run(&self) -> Result<DiagnosticData> {
         let content = std::fs::read_to_string("/proc/net/route")
             .context("Failed to read /proc/net/route")?;
@@ -25,7 +25,7 @@ impl Diagnostic for LocalGatewayPingDiagnostic {
         let (interface, gateway_ip) = iface_gw.ok_or_else(|| anyhow!("デフォルトゲートウェイが見つかりません"))?;
         
         let output = Command::new("ping")
-            .args(&["-c", "3", "-W", "1", "-I", &interface, &gateway_ip])
+            .args(["-c", "3", "-W", "1", "-I", &interface, &gateway_ip])
             .output()
             .context("Ping command failed")?;
             

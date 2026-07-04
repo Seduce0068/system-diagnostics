@@ -4,7 +4,7 @@ use serde_json::json;
 
 pub struct DnsLatencyDiagnostic;
 impl Diagnostic for DnsLatencyDiagnostic {
-    fn name(&self) -> &str { "DNS Latency" }
+    fn id(&self) -> &str { "dns_latency" }
     fn run(&self) -> Result<DiagnosticData> {
         use std::net::ToSocketAddrs;
         use std::time::Instant;
