@@ -1,17 +1,18 @@
-use std::fs;
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
-use serde_json::Value;
 
-pub struct ActiveConnectionDiagnostic;
+pub struct ActiveConnectionDiagnostic<S: SystemInterface> {
+    pub sys: S,
+}
 
-impl Diagnostic for ActiveConnectionDiagnostic {
+impl<S: SystemInterface> Diagnostic for ActiveConnectionDiagnostic<S> {
     fn id(&self) -> &str { "active_connections" }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let mut connections = Vec::new();
         for path in &["/proc/net/tcp", "/proc/net/tcp6"] {
-            if let Ok(content) = fs::read_to_string(path) {
+            if let Ok(content) = self.sys.read_to_string(path) {
                 for line in content.lines().skip(1) {
                     let fields: Vec<&str> = line.split_whitespace().collect();
                     if fields.len() > 3 {

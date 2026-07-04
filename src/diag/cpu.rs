@@ -11,29 +11,29 @@ impl<S: SystemInterface> Diagnostic for CpuFrequencyDiagnostic<S> {
         let cpu_dir = "/sys/devices/system/cpu";
         
         let mut freq_data = Vec::new();
+        let mut total_throttle_count = 0;
         let mut cores = 0;
+
         if let Ok(entries) = self.sys.read_dir(cpu_dir) {
             for path in entries {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if name.starts_with("cpu") && name[3..].chars().all(|c| c.is_ascii_digit()) {
                     cores += 1;
+                    
+                    // frequency
                     let freq_path = path.join("cpufreq/scaling_cur_freq");
                     if let Ok(freq_str) = self.sys.read_to_string(freq_path) {
                         if let Ok(freq_khz) = freq_str.trim().parse::<u64>() {
                             freq_data.push(freq_khz);
                         }
                     }
-                }
-            }
-        }
 
-        let mut total_throttle_count = 0;
-        if let Ok(entries) = self.sys.read_dir(cpu_dir) {
-            for path in entries {
-                let throttle_path = path.join("thermal_throttle/core_throttle_count");
-                if let Ok(content) = self.sys.read_to_string(throttle_path) {
-                    if let Ok(count) = content.trim().parse::<u64>() {
-                        total_throttle_count += count;
+                    // throttling
+                    let throttle_path = path.join("thermal_throttle/core_throttle_count");
+                    if let Ok(content) = self.sys.read_to_string(throttle_path) {
+                        if let Ok(count) = content.trim().parse::<u64>() {
+                            total_throttle_count += count;
+                        }
                     }
                 }
             }
@@ -94,12 +94,15 @@ mod tests {
         fn read_to_string<P: AsRef<Path>>(&self, path: P) -> Result<String, DiagnosticError> {
             self.files.get(path.as_ref().to_str().unwrap())
                 .cloned()
-                .ok_or_else(|| DiagnosticError::DiagnosticFailed("File not found".into()))
+                .ok_or_else(|| DiagnosticError::DiagnosticFailed(format!("File not found: {}", path.as_ref().display())))
         }
         fn read_dir<P: AsRef<Path>>(&self, path: P) -> Result<Vec<PathBuf>, DiagnosticError> {
             self.dirs.get(path.as_ref().to_str().unwrap())
                 .cloned()
-                .ok_or_else(|| DiagnosticError::DiagnosticFailed("Dir not found".into()))
+                .ok_or_else(|| DiagnosticError::DiagnosticFailed(format!("Dir not found: {}", path.as_ref().display())))
+        }
+        fn run_command(&self, _program: &str, _args: &[&str]) -> Result<String, DiagnosticError> {
+            Ok("".to_string())
         }
     }
 

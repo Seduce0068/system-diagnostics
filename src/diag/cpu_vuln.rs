@@ -1,10 +1,11 @@
-use std::fs;
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
 use serde_json::json;
 
-pub struct CpuVulnerabilityDiagnostic;
+pub struct CpuVulnerabilityDiagnostic<S: SystemInterface> {
+    pub sys: S,
+}
 
-impl Diagnostic for CpuVulnerabilityDiagnostic {
+impl<S: SystemInterface> Diagnostic for CpuVulnerabilityDiagnostic<S> {
     fn id(&self) -> &str { "cpu_vulnerability" }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let mut vuln_map = std::collections::HashMap::new();
@@ -12,7 +13,7 @@ impl Diagnostic for CpuVulnerabilityDiagnostic {
         
         for vuln in vulns {
             let path = format!("/sys/devices/system/cpu/vulnerabilities/{}", vuln);
-            if let Ok(content) = fs::read_to_string(path) {
+            if let Ok(content) = self.sys.read_to_string(path) {
                 vuln_map.insert(vuln.to_string(), content.trim().to_string());
             }
         }

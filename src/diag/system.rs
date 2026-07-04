@@ -1,15 +1,14 @@
-use std::fs;
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
 
-pub struct UptimeLoadAvgDiagnostic;
+pub struct UptimeLoadAvgDiagnostic<S: SystemInterface> {
+    pub sys: S,
+}
 
-impl Diagnostic for UptimeLoadAvgDiagnostic {
+impl<S: SystemInterface> Diagnostic for UptimeLoadAvgDiagnostic<S> {
     fn id(&self) -> &str { "system_uptime_load" }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
-        let uptime_raw = fs::read_to_string("/proc/uptime")
-            .map_err(|e| DiagnosticError::Io(e))?;
-        let loadavg_raw = fs::read_to_string("/proc/loadavg")
-            .map_err(|e| DiagnosticError::Io(e))?;
+        let uptime_raw = self.sys.read_to_string("/proc/uptime")?;
+        let loadavg_raw = self.sys.read_to_string("/proc/loadavg")?;
             
         calculate_uptime_load(&uptime_raw, &loadavg_raw)
     }

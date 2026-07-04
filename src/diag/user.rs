@@ -1,17 +1,16 @@
-use std::process::Command;
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
 use serde_json::json;
 
-pub struct ActiveUsersSshDiagnostic;
-impl Diagnostic for ActiveUsersSshDiagnostic {
+pub struct ActiveUsersSshDiagnostic<S: SystemInterface> {
+    pub sys: S,
+}
+
+impl<S: SystemInterface> Diagnostic for ActiveUsersSshDiagnostic<S> {
     fn id(&self) -> &str { "active_ssh_users" }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
-        let who_output = Command::new("who").output();
+        let who_output = self.sys.run_command("who", &[]);
         let user_count = match who_output {
-            Ok(out) if out.status.success() => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                stdout.trim().lines().count()
-            }
+            Ok(stdout) => stdout.trim().lines().count(),
             _ => 0,
         };
         
@@ -21,16 +20,12 @@ impl Diagnostic for ActiveUsersSshDiagnostic {
         let is_systemd = std::path::Path::new("/run/systemd/system").exists();
         if !is_systemd {
             auth_check_status = "not_available".to_string();
-        } else if !has_journal_permission() {
+        } else if !self.has_journal_permission() {
             auth_check_status = "permission_denied".to_string();
         } else {
-            let ssh_log = Command::new("journalctl")
-                .args(["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"])
-                .output()
-                .map_err(|e| DiagnosticError::Io(e))?;
+            let ssh_log = self.sys.run_command("journalctl", &["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"]);
                 
-            if ssh_log.status.success() {
-                let stdout = String::from_utf8_lossy(&ssh_log.stdout);
+            if let Ok(stdout) = ssh_log {
                 for line in stdout.lines() {
                     if line.contains("Failed password") || line.contains("Invalid user") {
                         fail_count += 1;
@@ -43,11 +38,13 @@ impl Diagnostic for ActiveUsersSshDiagnostic {
     }
 }
 
-fn has_journal_permission() -> bool {
-    if let Ok(output) = Command::new("journalctl").args(["-n", "1", "--no-pager"]).output() {
-        output.status.success() && !String::from_utf8_lossy(&output.stderr).contains("No journal files were found")
-    } else {
-        false
+impl<S: SystemInterface> ActiveUsersSshDiagnostic<S> {
+    fn has_journal_permission(&self) -> bool {
+        if let Ok(_) = self.sys.run_command("journalctl", &["-n", "1", "--no-pager"]) {
+            true
+        } else {
+            false
+        }
     }
 }
 

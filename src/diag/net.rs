@@ -1,13 +1,14 @@
-use std::process::Command;
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
 use serde_json::json;
 
-pub struct LocalGatewayPingDiagnostic;
-impl Diagnostic for LocalGatewayPingDiagnostic {
+pub struct LocalGatewayPingDiagnostic<S: SystemInterface> {
+    pub sys: S,
+}
+
+impl<S: SystemInterface> Diagnostic for LocalGatewayPingDiagnostic<S> {
     fn id(&self) -> &str { "local_gateway_ping" }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
-        let content = std::fs::read_to_string("/proc/net/route")
-            .map_err(|e| DiagnosticError::Io(e))?;
+        let content = self.sys.read_to_string("/proc/net/route")?;
         
         let mut iface_gw = None;
         for line in content.lines().skip(1) {
@@ -23,13 +24,8 @@ impl Diagnostic for LocalGatewayPingDiagnostic {
         
         let (interface, gateway_ip) = iface_gw.ok_or_else(|| DiagnosticError::DiagnosticFailed("デフォルトゲートウェイが見つかりません".into()))?;
         
-        let output = Command::new("ping")
-            .args(["-c", "3", "-W", "1", "-I", &interface, &gateway_ip])
-            .output()
-            .map_err(|e| DiagnosticError::DiagnosticFailed(format!("Ping command failed: {}", e)))?;
+        let stdout = self.sys.run_command("ping", &["-c", "3", "-W", "1", "-I", &interface, &gateway_ip])?;
             
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        
         calculate_net_diag(interface, gateway_ip, &stdout)
     }
 }
