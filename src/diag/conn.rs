@@ -2,9 +2,95 @@ use anyhow::Result;
 use std::fs;
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
-use crate::diag::Diagnostic;
+use crate::diag::{Diagnostic, DiagnosticData};
+use serde_json::Value;
 
-// IPv6 16進文字列(32文字)をパースして標準表記にするヘルパー
+pub struct ActiveConnectionDiagnostic;
+
+impl Diagnostic for ActiveConnectionDiagnostic {
+    fn name(&self) -> &str { "Active Connections" }
+    fn run(&self) -> Result<DiagnosticData> {
+        let mut connections = Vec::new();
+        for path in &["/proc/net/tcp", "/proc/net/tcp6"] {
+            if let Ok(content) = fs::read_to_string(path) {
+                for line in content.lines().skip(1) {
+                    let fields: Vec<&str> = line.split_whitespace().collect();
+                    if fields.len() > 3 {
+                        connections.push((fields[2].to_string(), fields[3].to_string()));
+                    }
+                }
+            }
+        }
+        
+        calculate_conn_diag(connections)
+    }
+}
+
+fn calculate_conn_diag(connections: Vec<(String, String)>) -> Result<DiagnosticData> {
+    let mut est_count = 0;
+    let mut remote_ips = HashMap::new();
+    
+    for (remote_addr, state) in connections {
+        if state == "01" { // ESTABLISHED
+            est_count += 1;
+            if let Some(ip_hex) = remote_addr.split(':').next() {
+                let ip = hex_to_ip(ip_hex);
+                *remote_ips.entry(ip).or_insert(0) += 1;
+            }
+        }
+    }
+    
+    let mut ip_counts: Vec<(String, usize)> = remote_ips.into_iter().collect();
+    ip_counts.sort_by(|a, b| b.1.cmp(&a.1));
+    let top_dest: Vec<Value> = ip_counts.iter()
+        .take(3)
+        .map(|(ip, count)| serde_json::json!({"ip": ip, "count": count}))
+        .collect();
+        
+    let raw = serde_json::json!({
+        "established_count": est_count,
+        "top_destinations": top_dest
+    });
+    
+    let top_dest_str = ip_counts.iter()
+        .take(3)
+        .map(|(ip, count)| format!("{} ({}本)", ip, count))
+        .collect::<Vec<String>>()
+        .join(", ");
+        
+    let readable = if est_count == 0 {
+        "確立された外部接続はありません (正常)".to_string()
+    } else {
+        format!(
+            "確立済み接続(ESTABLISHED): {}本 | 主要接続先: {}",
+            est_count,
+            if top_dest_str.is_empty() { "なし".to_string() } else { top_dest_str }
+        )
+    };
+    
+    Ok(DiagnosticData {
+        raw,
+        readable,
+    })
+}
+
+fn hex_to_ip(hex_ip: &str) -> String {
+    if hex_ip.len() == 8 {
+        let bytes = (0..4)
+            .map(|i| u8::from_str_radix(&hex_ip[i * 2..i * 2 + 2], 16).unwrap_or(0))
+            .collect::<Vec<u8>>();
+        format!("{}.{}.{}.{}", bytes[3], bytes[2], bytes[1], bytes[0])
+    } else if hex_ip.len() == 32 {
+        if let Some(ipv6) = parse_ipv6_hex(hex_ip) {
+            ipv6.to_string()
+        } else {
+            "IPv6(不正形式)".to_string()
+        }
+    } else {
+        "不明".to_string()
+    }
+}
+
 fn parse_ipv6_hex(hex: &str) -> Option<Ipv6Addr> {
     if hex.len() != 32 { return None; }
     let mut segments = [0u16; 8];
@@ -21,104 +107,16 @@ fn parse_ipv6_hex(hex: &str) -> Option<Ipv6Addr> {
     ))
 }
 
-pub struct ActiveConnectionDiagnostic;
-impl ActiveConnectionDiagnostic {
-    fn hex_to_ip(&self, hex_ip: &str) -> String {
-        if hex_ip.len() == 8 {
-            let bytes = (0..4)
-                .map(|i| u8::from_str_radix(&hex_ip[i * 2..i * 2 + 2], 16).unwrap_or(0))
-                .collect::<Vec<u8>>();
-            format!("{}.{}.{}.{}", bytes[3], bytes[2], bytes[1], bytes[0])
-        } else if hex_ip.len() == 32 {
-            if let Some(ipv6) = parse_ipv6_hex(hex_ip) {
-                ipv6.to_string()
-            } else {
-                "IPv6(不正形式)".to_string()
-            }
-        } else {
-            "不明".to_string()
-        }
-    }
-}
-impl Diagnostic for ActiveConnectionDiagnostic {
-    fn name(&self) -> &str { "Active Connections" }
-    fn run(&self) -> Result<String> {
-        let paths = vec!["/proc/net/tcp", "/proc/net/tcp6"];
-        let mut est_count = 0;
-        let mut remote_ips = HashMap::new();
-        
-        for path in paths {
-            if let Ok(content) = fs::read_to_string(path) {
-                for line in content.lines().skip(1) {
-                    let fields: Vec<&str> = line.split_whitespace().collect();
-                    if fields.len() > 3 {
-                        let state = fields[3];
-                        if state == "01" { // ESTABLISHED
-                            est_count += 1;
-                            let remote_addr = fields[2];
-                            if let Some(ip_hex) = remote_addr.split(':').next() {
-                                let ip = self.hex_to_ip(ip_hex);
-                                *remote_ips.entry(ip).or_insert(0) += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        let mut ip_counts: Vec<(String, usize)> = remote_ips.into_iter().collect();
-        ip_counts.sort_by(|a, b| b.1.cmp(&a.1));
-        let top_dest = ip_counts.iter()
-            .take(3)
-            .map(|(ip, count)| format!("{} ({}本)", ip, count))
-            .collect::<Vec<String>>()
-            .join(", ");
-            
-        if est_count == 0 {
-            Ok("確立された外部接続はありません (正常)".to_string())
-        } else {
-            Ok(format!(
-                "確立済み接続(ESTABLISHED): {}本 | 主要接続先: {}",
-                est_count,
-                if top_dest.is_empty() { "なし".to_string() } else { top_dest }
-            ))
-        }
-    }
-    fn report(&self) -> serde_json::Value {
-        let paths = vec!["/proc/net/tcp", "/proc/net/tcp6"];
-        let mut est_count = 0;
-        let mut remote_ips = HashMap::new();
-        
-        for path in paths {
-            if let Ok(content) = fs::read_to_string(path) {
-                for line in content.lines().skip(1) {
-                    let fields: Vec<&str> = line.split_whitespace().collect();
-                    if fields.len() > 3 {
-                        let state = fields[3];
-                        if state == "01" { // ESTABLISHED
-                            est_count += 1;
-                            let remote_addr = fields[2];
-                            if let Some(ip_hex) = remote_addr.split(':').next() {
-                                let ip = self.hex_to_ip(ip_hex);
-                                *remote_ips.entry(ip).or_insert(0) += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        let mut ip_counts: Vec<(String, usize)> = remote_ips.into_iter().collect();
-        ip_counts.sort_by(|a, b| b.1.cmp(&a.1));
-        let top_dest: Vec<serde_json::Value> = ip_counts.iter()
-            .take(3)
-            .map(|(ip, count)| serde_json::json!({"ip": ip, "count": count}))
-            .collect();
-            
-        serde_json::json!({
-            "name": self.name(),
-            "established_count": est_count,
-            "top_destinations": top_dest
-        })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_conn_diag_normal() {
+        let conns = vec![("0100007F:0050".to_string(), "01".to_string())];
+        let result = calculate_conn_diag(conns);
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert!(data.readable.contains("1本"));
     }
 }

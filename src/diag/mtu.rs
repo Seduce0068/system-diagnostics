@@ -1,8 +1,42 @@
 use anyhow::{Result, anyhow, Context};
 use std::process::Command;
-use crate::diag::Diagnostic;
+use crate::diag::{Diagnostic, DiagnosticData};
+use serde_json::json;
 
-// デフォルトネットワークインターフェースを動的に取得するヘルパー
+pub struct NetworkMTUDiagnostic;
+impl Diagnostic for NetworkMTUDiagnostic {
+    fn name(&self) -> &str { "Network MTU" }
+    fn run(&self) -> Result<DiagnosticData> {
+        let interface = get_default_interface().context("Failed to get interface")?;
+        let target = "8.8.8.8";
+        
+        // ping check
+        if Command::new("ping").arg("-V").output().is_err() {
+            return Err(anyhow!("'ping' コマンドがシステムに見つかりません"));
+        }
+
+        let mut low = 576;
+        let mut high = 1500;
+        let mut optimal = low;
+        
+        while low <= high {
+            let mid = (low + high) / 2;
+            let payload = mid - 28;
+            let output = Command::new("ping")
+                .args(&["-c", "1", "-W", "1", "-I", &interface, "-s", &payload.to_string(), "-M", "do", target])
+                .output()?;
+            if output.status.success() {
+                optimal = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        
+        calculate_mtu_diag(interface, optimal)
+    }
+}
+
 fn get_default_interface() -> Result<String> {
     let content = std::fs::read_to_string("/proc/net/route")
         .context("Failed to read /proc/net/route")?;
@@ -23,68 +57,39 @@ fn get_default_interface() -> Result<String> {
     Err(anyhow!("アクティブなネットワークインターフェースが見つかりません"))
 }
 
-pub struct NetworkMTUDiagnostic;
-impl Diagnostic for NetworkMTUDiagnostic {
-    fn name(&self) -> &str { "Network MTU" }
-    fn run(&self) -> Result<String> {
-        let interface = get_default_interface()?;
-        let target = "8.8.8.8";
-        let mut low = 576;
-        let mut high = 1500;
-        let mut optimal = low;
-        
-        let check_ping = Command::new("ping").arg("-V").output();
-        if check_ping.is_err() {
-            return Err(anyhow!("'ping' コマンドがシステムに見つかりません"));
-        }
-
-        while low <= high {
-            let mid = (low + high) / 2;
-            let payload = mid - 28;
-            let output = Command::new("ping")
-                .args(&["-c", "1", "-W", "1", "-I", &interface, "-s", &payload.to_string(), "-M", "do", target])
-                .output()?;
-            if output.status.success() {
-                optimal = mid;
-                low = mid + 1;
-            } else {
-                high = mid - 1;
-            }
-        }
-        Ok(format!("推奨MTU (via {}): {}", interface, optimal))
+fn calculate_mtu_diag(interface: String, mtu: u64) -> Result<DiagnosticData> {
+    if mtu < 576 {
+        return Err(anyhow!("MTUの値が異常です: {}", mtu));
     }
-    fn report(&self) -> serde_json::Value {
-        let interface = get_default_interface().unwrap_or_else(|_| "unknown".to_string());
-        let target = "8.8.8.8";
-        let mut low = 576;
-        let mut high = 1500;
-        let mut optimal = low;
-        
-        // ping check
-        if Command::new("ping").arg("-V").output().is_ok() {
-            while low <= high {
-                let mid = (low + high) / 2;
-                let payload = mid - 28;
-                if let Ok(output) = Command::new("ping")
-                    .args(&["-c", "1", "-W", "1", "-I", &interface, "-s", &payload.to_string(), "-M", "do", target])
-                    .output()
-                {
-                    if output.status.success() {
-                        optimal = mid;
-                        low = mid + 1;
-                    } else {
-                        high = mid - 1;
-                    }
-                } else {
-                    high = mid - 1;
-                }
-            }
-        }
-        
-        serde_json::json!({
-            "name": self.name(),
-            "interface": interface,
-            "optimal_mtu": optimal
-        })
+    
+    let raw = json!({
+        "interface": interface,
+        "optimal_mtu": mtu
+    });
+
+    let readable = format!("推奨MTU (via {}): {}", interface, mtu);
+
+    Ok(DiagnosticData {
+        raw,
+        readable,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_mtu_diag_normal() {
+        let result = calculate_mtu_diag("eth0".to_string(), 1500);
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert!(data.readable.contains("1500"));
+    }
+
+    #[test]
+    fn test_calculate_mtu_diag_low() {
+        let result = calculate_mtu_diag("eth0".to_string(), 500);
+        assert!(result.is_err());
     }
 }

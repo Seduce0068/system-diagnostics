@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
-use crate::diag::Diagnostic;
 
 mod diag;
 
@@ -22,28 +21,22 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let diagnostics: Vec<Box<dyn Diagnostic>> = vec![
-        Box::new(diag::system::UptimeLoadAvgDiagnostic),
-        Box::new(diag::cpu::CpuFrequencyDiagnostic),
-        Box::new(diag::cpu_vuln::CpuVulnerabilityDiagnostic),
-        Box::new(diag::net::LocalGatewayPingDiagnostic),
-        Box::new(diag::conn::ActiveConnectionDiagnostic),
-        Box::new(diag::user::ActiveUsersSshDiagnostic),
-        Box::new(diag::mtu::NetworkMTUDiagnostic),
-        Box::new(diag::time::NtpTimeSyncDiagnostic),
-        Box::new(diag::dns::DnsLatencyDiagnostic),
-    ];
 
     match cli.command {
         Commands::Run => {
-            for d in diagnostics {
-                println!("{}: {}", d.name(), d.run()?);
+            for d in diag::get_all_diagnostics() {
+                match d.run() {
+                    Ok(data) => println!("{}: {}", d.name(), data.readable),
+                    Err(e) => eprintln!("{}: 診断失敗: {}", d.name(), e),
+                }
             }
         }
         Commands::Save { path } => {
             let mut snapshot = serde_json::Map::new();
-            for d in diagnostics {
-                snapshot.insert(d.name().to_string(), d.report());
+            for d in diag::get_all_diagnostics() {
+                if let Ok(data) = d.run() {
+                    snapshot.insert(d.name().to_string(), data.raw);
+                }
             }
             fs::write(path, serde_json::to_string_pretty(&snapshot)?)?;
             println!("Snapshot saved.");
@@ -52,8 +45,10 @@ fn main() -> Result<()> {
             let baseline_content = fs::read_to_string(baseline)?;
             let baseline_json: serde_json::Value = serde_json::from_str(&baseline_content)?;
             let mut current = serde_json::Map::new();
-            for d in diagnostics {
-                current.insert(d.name().to_string(), d.report());
+            for d in diag::get_all_diagnostics() {
+                if let Ok(data) = d.run() {
+                    current.insert(d.name().to_string(), data.raw);
+                }
             }
             
             // Simple comparison logic
