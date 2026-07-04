@@ -3,7 +3,7 @@
 //! [dependencies]
 //! anyhow = "1.0"
 //! pnet = "0.35"
-//! reqwest = { version = "0.11", features = ["json"] }
+//! reqwest = { version = "0.11", features = ["json", "stream"] }
 //! clap = { version = "4.0", features = ["derive"] }
 //! tokio = { version = "1.30", features = ["full"] }
 //! futures = "0.3"
@@ -15,16 +15,17 @@ use anyhow::{Result, Context, anyhow};
 use clap::Parser;
 use tokio::time::timeout;
 use futures::future::join_all;
+use futures::StreamExt;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// タイムアウト時間（秒）
-    #[arg(short, long, default_value_t = 5)]
+    #[arg(short, long, default_value_t = 10)]
     timeout: u64,
 
-    /// 速度テスト用URL
-    #[arg(short, long, default_value = "https://speed.cloudflare.com/__down?bytes=1048576")]
+    /// 速度テスト用URL (デフォルトは 10MB のデータ)
+    #[arg(short, long, default_value = "https://speed.cloudflare.com/__down?bytes=10485760")]
     url: String,
 }
 
@@ -70,11 +71,16 @@ async fn measure_download_speed(url: &str, timeout_duration: Duration) -> Result
         return Err(anyhow!("HTTPエラー: {}", response.status()));
     }
     
-    let content = response.bytes().await.context("レスポンス取得失敗")?;
-    let total_bytes = content.len();
+    let mut total_bytes = 0;
+    let mut stream = response.bytes_stream();
+    
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.context("レスポンス取得失敗")?;
+        total_bytes += chunk.len();
+    }
     
     let duration = start.elapsed().as_secs_f64();
-    if duration == 0.0 { return Ok(0.0); }
+    if duration <= 0.0001 { return Ok(0.0); } // ゼロ除算・極小値による無限大の防止
     
     let mbps = ((total_bytes * 8) as f64 / 1_000_000.0) / duration;
     Ok(mbps)
@@ -107,17 +113,23 @@ async fn check_internet_connectivity(timeout_duration: Duration) -> Result<()> {
     let mut successful = false;
     
     for res in results {
-        let (target, result, duration) = res?;
-        match result {
-            Ok(Ok(_)) => {
-                println!("  ✅ {}: 接続成功 ({:?})", target, duration);
-                successful = true;
+        match res {
+            Ok((target, result, duration)) => {
+                match result {
+                    Ok(Ok(_)) => {
+                        println!("  ✅ {}: 接続成功 ({:?})", target, duration);
+                        successful = true;
+                    }
+                    Ok(Err(e)) => {
+                        println!("  ⚠️ {}: 接続拒否/失敗 ({:?}) - {}", target, duration, e);
+                    }
+                    Err(_) => {
+                        println!("  ⚠️ {}: タイムアウト ({:?})", target, duration);
+                    }
+                }
             }
-            Ok(Err(e)) => {
-                println!("  ⚠️ {}: 接続拒否/失敗 ({:?}) - {}", target, duration, e);
-            }
-            Err(_) => {
-                println!("  ⚠️ {}: タイムアウト ({:?})", target, duration);
+            Err(e) => {
+                println!("  ⚠️ 疎通タスク実行エラー (パニックなど): {}", e);
             }
         }
     }
