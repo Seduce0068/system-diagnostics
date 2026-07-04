@@ -1,12 +1,11 @@
-use anyhow::Result;
 use std::process::Command;
-use crate::diag::{Diagnostic, DiagnosticData};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
 use serde_json::json;
 
 pub struct ActiveUsersSshDiagnostic;
 impl Diagnostic for ActiveUsersSshDiagnostic {
     fn id(&self) -> &str { "active_ssh_users" }
-    fn run(&self) -> Result<DiagnosticData> {
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let who_output = Command::new("who").output();
         let user_count = match who_output {
             Ok(out) if out.status.success() => {
@@ -27,15 +26,14 @@ impl Diagnostic for ActiveUsersSshDiagnostic {
         } else {
             let ssh_log = Command::new("journalctl")
                 .args(["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"])
-                .output();
+                .output()
+                .map_err(|e| DiagnosticError::Io(e))?;
                 
-            if let Ok(out) = ssh_log {
-                if out.status.success() {
-                    let stdout = String::from_utf8_lossy(&out.stdout);
-                    for line in stdout.lines() {
-                        if line.contains("Failed password") || line.contains("Invalid user") {
-                            fail_count += 1;
-                        }
+            if ssh_log.status.success() {
+                let stdout = String::from_utf8_lossy(&ssh_log.stdout);
+                for line in stdout.lines() {
+                    if line.contains("Failed password") || line.contains("Invalid user") {
+                        fail_count += 1;
                     }
                 }
             }
@@ -53,7 +51,7 @@ fn has_journal_permission() -> bool {
     }
 }
 
-fn calculate_user_diag(user_count: usize, fail_count: u64, status: String) -> Result<DiagnosticData> {
+fn calculate_user_diag(user_count: usize, fail_count: u64, status: String) -> Result<DiagnosticData, DiagnosticError> {
     let raw = json!({
         "active_users": user_count,
         "ssh_auth_failures": fail_count,

@@ -1,13 +1,12 @@
-use anyhow::{Result, anyhow};
 use std::fs;
-use crate::diag::{Diagnostic, DiagnosticData};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
 use serde_json::json;
 
 pub struct CpuVulnerabilityDiagnostic;
 
 impl Diagnostic for CpuVulnerabilityDiagnostic {
     fn id(&self) -> &str { "cpu_vulnerability" }
-    fn run(&self) -> Result<DiagnosticData> {
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let mut vuln_map = std::collections::HashMap::new();
         let vulns = vec!["meltdown", "spectre_v1", "spectre_v2", "mds", "l1tf"];
         
@@ -22,9 +21,9 @@ impl Diagnostic for CpuVulnerabilityDiagnostic {
     }
 }
 
-fn calculate_cpu_vuln_diag(vuln_map: std::collections::HashMap<String, String>) -> Result<DiagnosticData> {
+fn calculate_cpu_vuln_diag(vuln_map: std::collections::HashMap<String, String>) -> Result<DiagnosticData, DiagnosticError> {
     if vuln_map.is_empty() {
-        return Err(anyhow!("CPU脆弱性緩和ステータスを取得できませんでした"));
+        return Err(DiagnosticError::DiagnosticFailed("CPU脆弱性緩和ステータスを取得できませんでした".into()));
     }
     
     let mut status_lines = Vec::new();

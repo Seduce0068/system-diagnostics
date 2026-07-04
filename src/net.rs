@@ -1,11 +1,11 @@
-use anyhow::{Result, anyhow};
+use crate::diag::error::DiagnosticError;
 use pnet::datalink;
 
-pub fn get_default_interface() -> Result<String> {
+pub fn get_default_interface() -> Result<String, DiagnosticError> {
     for interface in datalink::interfaces() {
         if interface.is_up() && !interface.is_loopback() && !interface.ips.is_empty() {
             return Ok(interface.name);
         }
     }
-    Err(anyhow!("アクティブなネットワークインターフェースが見つかりません"))
+    Err(DiagnosticError::DiagnosticFailed("アクティブなネットワークインターフェースが見つかりません".into()))
 }

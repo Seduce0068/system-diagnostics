@@ -1,18 +1,17 @@
-use anyhow::{Result, anyhow, Context};
 use std::process::Command;
-use crate::diag::{Diagnostic, DiagnosticData};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
 use serde_json::json;
 
 pub struct NetworkMTUDiagnostic;
 impl Diagnostic for NetworkMTUDiagnostic {
     fn id(&self) -> &str { "network_mtu" }
-    fn run(&self) -> Result<DiagnosticData> {
-        let interface = get_default_interface().context("Failed to get interface")?;
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
+        let interface = crate::net::get_default_interface()?;
         let target = "8.8.8.8";
         
         // ping check
         if Command::new("ping").arg("-V").output().is_err() {
-            return Err(anyhow!("'ping' コマンドがシステムに見つかりません"));
+            return Err(DiagnosticError::DiagnosticFailed("'ping' コマンドがシステムに見つかりません".into()));
         }
 
         let mut low = 576;
@@ -24,7 +23,8 @@ impl Diagnostic for NetworkMTUDiagnostic {
             let payload = mid - 28;
             let output = Command::new("ping")
                 .args(["-c", "1", "-W", "1", "-I", &interface, "-s", &payload.to_string(), "-M", "do", target])
-                .output()?;
+                .output()
+                .map_err(|e| DiagnosticError::Io(e))?;
             if output.status.success() {
                 optimal = mid;
                 low = mid + 1;
@@ -37,29 +37,9 @@ impl Diagnostic for NetworkMTUDiagnostic {
     }
 }
 
-fn get_default_interface() -> Result<String> {
-    let content = std::fs::read_to_string("/proc/net/route")
-        .context("Failed to read /proc/net/route")?;
-    for line in content.lines().skip(1) {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() > 1 && fields[1] == "00000000" {
-            return Ok(fields[0].to_string());
-        }
-    }
-    if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name != "lo" {
-                return Ok(name);
-            }
-        }
-    }
-    Err(anyhow!("アクティブなネットワークインターフェースが見つかりません"))
-}
-
-fn calculate_mtu_diag(interface: String, mtu: u64) -> Result<DiagnosticData> {
+fn calculate_mtu_diag(interface: String, mtu: u64) -> Result<DiagnosticData, DiagnosticError> {
     if mtu < 576 {
-        return Err(anyhow!("MTUの値が異常です: {}", mtu));
+        return Err(DiagnosticError::DiagnosticFailed(format!("MTUの値が異常です: {}", mtu)));
     }
     
     let raw = json!({

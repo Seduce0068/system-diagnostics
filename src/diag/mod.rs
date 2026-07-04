@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::diag::error::DiagnosticError;
 use serde_json::Value;
 
 pub struct DiagnosticData {
@@ -8,7 +8,7 @@ pub struct DiagnosticData {
 
 pub trait Diagnostic {
     fn id(&self) -> &str;
-    fn run(&self) -> Result<DiagnosticData>;
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError>;
 }
 
 pub fn get_all_diagnostics() -> Vec<Box<dyn Diagnostic>> {
@@ -35,3 +35,5 @@ pub mod time;
 pub mod conn;
 pub mod user;
 pub mod sys_interface;
+pub mod error;
+

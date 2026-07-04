@@ -2,8 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
-
-mod diag;
+use system_diag_tool::diag;
 
 #[derive(Parser)]
 #[command(author, version, about = "System Diagnostic Tool")]
@@ -56,8 +55,13 @@ fn main() -> Result<()> {
         Commands::Save { path } => {
             let mut snapshot = serde_json::Map::new();
             for d in diag::get_all_diagnostics() {
-                if let Ok(data) = d.run() {
-                    snapshot.insert(d.id().to_string(), data.raw);
+                match d.run() {
+                    Ok(data) => {
+                        snapshot.insert(d.id().to_string(), data.raw);
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️ 警告: 診断 '{}' が失敗したため、スナップショットに保存されませんでした: {}", d.id(), e);
+                    }
                 }
             }
             fs::write(path, serde_json::to_string_pretty(&snapshot)?)?;
@@ -68,8 +72,13 @@ fn main() -> Result<()> {
             let baseline_json: serde_json::Value = serde_json::from_str(&baseline_content)?;
             let mut current = serde_json::Map::new();
             for d in diag::get_all_diagnostics() {
-                if let Ok(data) = d.run() {
-                    current.insert(d.id().to_string(), data.raw);
+                match d.run() {
+                    Ok(data) => {
+                        current.insert(d.id().to_string(), data.raw);
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️ 警告: 診断 '{}' が失敗したため、比較から除外されました: {}", d.id(), e);
+                    }
                 }
             }
             

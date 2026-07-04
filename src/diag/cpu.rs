@@ -1,5 +1,4 @@
-use anyhow::{Result, anyhow};
-use crate::diag::{Diagnostic, DiagnosticData, sys_interface::SystemInterface};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
 use serde_json::json;
 
 pub struct CpuFrequencyDiagnostic<S: SystemInterface> {
@@ -8,10 +7,9 @@ pub struct CpuFrequencyDiagnostic<S: SystemInterface> {
 
 impl<S: SystemInterface> Diagnostic for CpuFrequencyDiagnostic<S> {
     fn id(&self) -> &str { "cpu_frequency" }
-    fn run(&self) -> Result<DiagnosticData> {
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let cpu_dir = "/sys/devices/system/cpu";
         
-        // データの収集
         let mut freq_data = Vec::new();
         let mut cores = 0;
         if let Ok(entries) = self.sys.read_dir(cpu_dir) {
@@ -45,9 +43,9 @@ impl<S: SystemInterface> Diagnostic for CpuFrequencyDiagnostic<S> {
     }
 }
 
-fn calculate_cpu_diag(cores: u64, freq_khz_list: Vec<u64>, throttle_count: u64) -> Result<DiagnosticData> {
+fn calculate_cpu_diag(cores: u64, freq_khz_list: Vec<u64>, throttle_count: u64) -> Result<DiagnosticData, DiagnosticError> {
     if cores == 0 {
-        return Err(anyhow!("CPUコア情報を取得できませんでした"));
+        return Err(DiagnosticError::DiagnosticFailed("CPUコア情報を取得できませんでした".into()));
     }
     
     let freqs_ghz: Vec<f64> = freq_khz_list.iter().map(|&khz| khz as f64 / 1000.0 / 1000.0).collect();
@@ -93,15 +91,15 @@ mod tests {
     }
 
     impl SystemInterface for MockSystem {
-        fn read_to_string<P: AsRef<Path>>(&self, path: P) -> Result<String> {
+        fn read_to_string<P: AsRef<Path>>(&self, path: P) -> Result<String, DiagnosticError> {
             self.files.get(path.as_ref().to_str().unwrap())
                 .cloned()
-                .ok_or_else(|| anyhow!("File not found"))
+                .ok_or_else(|| DiagnosticError::DiagnosticFailed("File not found".into()))
         }
-        fn read_dir<P: AsRef<Path>>(&self, path: P) -> Result<Vec<PathBuf>> {
+        fn read_dir<P: AsRef<Path>>(&self, path: P) -> Result<Vec<PathBuf>, DiagnosticError> {
             self.dirs.get(path.as_ref().to_str().unwrap())
                 .cloned()
-                .ok_or_else(|| anyhow!("Dir not found"))
+                .ok_or_else(|| DiagnosticError::DiagnosticFailed("Dir not found".into()))
         }
     }
 

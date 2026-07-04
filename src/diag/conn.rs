@@ -1,15 +1,14 @@
-use anyhow::Result;
 use std::fs;
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
-use crate::diag::{Diagnostic, DiagnosticData};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
 use serde_json::Value;
 
 pub struct ActiveConnectionDiagnostic;
 
 impl Diagnostic for ActiveConnectionDiagnostic {
     fn id(&self) -> &str { "active_connections" }
-    fn run(&self) -> Result<DiagnosticData> {
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let mut connections = Vec::new();
         for path in &["/proc/net/tcp", "/proc/net/tcp6"] {
             if let Ok(content) = fs::read_to_string(path) {
@@ -26,7 +25,7 @@ impl Diagnostic for ActiveConnectionDiagnostic {
     }
 }
 
-fn calculate_conn_diag(connections: Vec<(String, String)>) -> Result<DiagnosticData> {
+fn calculate_conn_diag(connections: Vec<(String, String)>) -> Result<DiagnosticData, DiagnosticError> {
     let mut est_count = 0;
     let mut remote_ips = HashMap::new();
     

@@ -1,12 +1,11 @@
-use anyhow::Result;
 use std::process::Command;
-use crate::diag::{Diagnostic, DiagnosticData};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
 use serde_json::json;
 
 pub struct NtpTimeSyncDiagnostic;
 impl Diagnostic for NtpTimeSyncDiagnostic {
     fn id(&self) -> &str { "ntp_time_sync" }
-    fn run(&self) -> Result<DiagnosticData> {
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let mut ntp_active = false;
         let mut synchronized = false;
         let mut available = false;
@@ -38,7 +37,7 @@ impl Diagnostic for NtpTimeSyncDiagnostic {
     }
 }
 
-fn calculate_ntp_diag(available: bool, ntp_active: bool, synchronized: bool) -> Result<DiagnosticData> {
+fn calculate_ntp_diag(available: bool, ntp_active: bool, synchronized: bool) -> Result<DiagnosticData, DiagnosticError> {
     if !available {
         return Ok(DiagnosticData {
             raw: json!({"available": false}),

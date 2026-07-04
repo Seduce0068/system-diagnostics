@@ -14,9 +14,11 @@
 
 ## 3. コンポーネント構成
 
-- `Diagnostic` トレイト**: 全診断モジュールのインターフェース。
-  - `run()`: 診断の実行。`DiagnosticData`（可読テキストとJSONデータ）を返す。
-- **スナップショット比較エンジン**: 保存された JSON と現在の `run()` 結果のJSONデータを比較し、不整合を検知。
+- `Diagnostic` トレイト: 全診断モジュールのインターフェース。
+  - `run()`: 診断の実行。`DiagnosticData`（可読テキストとJSONデータ）または `DiagnosticError` を返す。
+  - `Result<DiagnosticData, DiagnosticError>` への型安全なエラー伝播。
+- **エラーハンドリング**: `thiserror` クレートを導入。`DiagnosticError` 列挙型により、IOエラーや診断処理の各失敗を型レベルで厳密に区別。
+- **クレート構成**: ライブラリクレート（`lib.rs`）とバイナリクレート（`main.rs`）を適切に分離し、モジュール重複コンパイルのアンチパターンを排除。
 - **CLI (clap)**: `run`, `save`, `compare` の各サブコマンドを提供。
 
 ## 4. セキュリティ

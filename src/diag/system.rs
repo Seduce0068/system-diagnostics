@@ -1,34 +1,33 @@
-use anyhow::{Result, anyhow, Context};
 use std::fs;
-use crate::diag::{Diagnostic, DiagnosticData};
+use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
 
 pub struct UptimeLoadAvgDiagnostic;
 
 impl Diagnostic for UptimeLoadAvgDiagnostic {
     fn id(&self) -> &str { "system_uptime_load" }
-    fn run(&self) -> Result<DiagnosticData> {
+    fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let uptime_raw = fs::read_to_string("/proc/uptime")
-            .context("Failed to read /proc/uptime")?;
+            .map_err(|e| DiagnosticError::Io(e))?;
         let loadavg_raw = fs::read_to_string("/proc/loadavg")
-            .context("Failed to read /proc/loadavg")?;
+            .map_err(|e| DiagnosticError::Io(e))?;
             
         calculate_uptime_load(&uptime_raw, &loadavg_raw)
     }
 }
 
-fn calculate_uptime_load(uptime_raw: &str, loadavg_raw: &str) -> Result<DiagnosticData> {
+fn calculate_uptime_load(uptime_raw: &str, loadavg_raw: &str) -> Result<DiagnosticData, DiagnosticError> {
     let uptime_secs: f64 = uptime_raw.split_whitespace().next()
         .and_then(|s| s.parse().ok())
-        .ok_or_else(|| anyhow!("Failed to parse /proc/uptime"))?;
+        .ok_or_else(|| DiagnosticError::Parse("Failed to parse /proc/uptime".into()))?;
         
     let loads: Vec<&str> = loadavg_raw.split_whitespace().collect();
     if loads.len() < 3 {
-        return Err(anyhow!("Invalid /proc/loadavg format"));
+        return Err(DiagnosticError::Parse("Invalid /proc/loadavg format".into()));
     }
     
-    let load_1: f64 = loads[0].parse().context("Failed to parse load_1")?;
-    let load_5: f64 = loads[1].parse().context("Failed to parse load_5")?;
-    let load_15: f64 = loads[2].parse().context("Failed to parse load_15")?;
+    let load_1: f64 = loads[0].parse().map_err(|_| DiagnosticError::Parse("Failed to parse load_1".into()))?;
+    let load_5: f64 = loads[1].parse().map_err(|_| DiagnosticError::Parse("Failed to parse load_5".into()))?;
+    let load_15: f64 = loads[2].parse().map_err(|_| DiagnosticError::Parse("Failed to parse load_15".into()))?;
     
     let cpu_cores = std::thread::available_parallelism()
         .map(|n| n.get())
