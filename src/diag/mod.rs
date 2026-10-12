@@ -22,10 +22,12 @@ pub fn get_all_diagnostics() -> Vec<Box<dyn Diagnostic>> {
         Box::new(mtu::NetworkMTUDiagnostic { sys: sys_interface::RealSystem }),
         Box::new(time::NtpTimeSyncDiagnostic),
         Box::new(dns::DnsLatencyDiagnostic),
+        Box::new(net_driver::LanDriverDiagnostic { sys: sys_interface::RealSystem }),
     ]
 }
 
 pub mod system;
+pub mod net_driver;
 pub mod cpu;
 pub mod cpu_vuln;
 pub mod net;
