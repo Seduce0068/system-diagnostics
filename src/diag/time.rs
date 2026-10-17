@@ -1,17 +1,19 @@
-use std::process::Command;
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
+use crate::diag::{error::DiagnosticError, Diagnostic, DiagnosticData};
 use serde_json::json;
+use std::process::Command;
 
 pub struct NtpTimeSyncDiagnostic;
 impl Diagnostic for NtpTimeSyncDiagnostic {
-    fn id(&self) -> &str { "ntp_time_sync" }
+    fn id(&self) -> &str {
+        "ntp_time_sync"
+    }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let mut ntp_active = false;
         let mut synchronized = false;
         let mut available = false;
-        
+
         let is_systemd = std::path::Path::new("/run/systemd/system").exists();
-        
+
         if is_systemd {
             available = true;
             if let Ok(out) = Command::new("timedatectl").arg("show").output() {
@@ -32,37 +34,42 @@ impl Diagnostic for NtpTimeSyncDiagnostic {
                 }
             }
         }
-        
+
         calculate_ntp_diag(available, ntp_active, synchronized)
     }
 }
 
-fn calculate_ntp_diag(available: bool, ntp_active: bool, synchronized: bool) -> Result<DiagnosticData, DiagnosticError> {
+fn calculate_ntp_diag(
+    available: bool,
+    ntp_active: bool,
+    synchronized: bool,
+) -> Result<DiagnosticData, DiagnosticError> {
     if !available {
         return Ok(DiagnosticData {
             raw: json!({"available": false}),
             readable: "非対応環境 (systemd非稼働のためスキップ)".to_string(),
         });
     }
-    
+
     let sync_status = if synchronized {
         "同期済み (正常)".to_string()
     } else {
         "⚠️ 未同期 (警告)".to_string()
     };
-    
+
     let raw = json!({
         "available": true,
         "ntp_active": ntp_active,
         "synchronized": synchronized
     });
-    
-    let readable = format!("NTPサービス: {} | 時刻同期状態: {}", if ntp_active { "有効" } else { "無効" }, sync_status);
-        
-    Ok(DiagnosticData {
-        raw,
-        readable,
-    })
+
+    let readable = format!(
+        "NTPサービス: {} | 時刻同期状態: {}",
+        if ntp_active { "有効" } else { "無効" },
+        sync_status
+    );
+
+    Ok(DiagnosticData { raw, readable })
 }
 
 #[cfg(test)]

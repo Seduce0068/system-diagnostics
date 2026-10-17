@@ -1,4 +1,6 @@
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
+use crate::diag::{
+    error::DiagnosticError, sys_interface::SystemInterface, Diagnostic, DiagnosticData,
+};
 use serde_json::json;
 
 pub struct CpuFrequencyDiagnostic<S: SystemInterface> {
@@ -6,10 +8,12 @@ pub struct CpuFrequencyDiagnostic<S: SystemInterface> {
 }
 
 impl<S: SystemInterface> Diagnostic for CpuFrequencyDiagnostic<S> {
-    fn id(&self) -> &str { "cpu_frequency" }
+    fn id(&self) -> &str {
+        "cpu_frequency"
+    }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let cpu_dir = "/sys/devices/system/cpu";
-        
+
         let mut freq_data = Vec::new();
         let mut total_throttle_count = 0;
         let mut cores = 0;
@@ -19,7 +23,7 @@ impl<S: SystemInterface> Diagnostic for CpuFrequencyDiagnostic<S> {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if name.starts_with("cpu") && name[3..].chars().all(|c| c.is_ascii_digit()) {
                     cores += 1;
-                    
+
                     // frequency
                     let freq_path = path.join("cpufreq/scaling_cur_freq");
                     if let Ok(freq_str) = self.sys.read_to_string(freq_path) {
@@ -38,22 +42,43 @@ impl<S: SystemInterface> Diagnostic for CpuFrequencyDiagnostic<S> {
                 }
             }
         }
-        
+
         calculate_cpu_diag(cores, freq_data, total_throttle_count)
     }
 }
 
-fn calculate_cpu_diag(cores: u64, freq_khz_list: Vec<u64>, throttle_count: u64) -> Result<DiagnosticData, DiagnosticError> {
+fn calculate_cpu_diag(
+    cores: u64,
+    freq_khz_list: Vec<u64>,
+    throttle_count: u64,
+) -> Result<DiagnosticData, DiagnosticError> {
     if cores == 0 {
-        return Err(DiagnosticError::DiagnosticFailed("CPUコア情報を取得できませんでした".into()));
+        return Err(DiagnosticError::DiagnosticFailed(
+            "CPUコア情報を取得できませんでした".into(),
+        ));
     }
-    
-    let freqs_ghz: Vec<f64> = freq_khz_list.iter().map(|&khz| khz as f64 / 1000.0 / 1000.0).collect();
-    
-    let avg = if freqs_ghz.is_empty() { 0.0 } else { freqs_ghz.iter().sum::<f64>() / freqs_ghz.len() as f64 };
-    let max = if freqs_ghz.is_empty() { 0.0 } else { freqs_ghz.iter().cloned().fold(f64::NEG_INFINITY, f64::max) };
-    let min = if freqs_ghz.is_empty() { 0.0 } else { freqs_ghz.iter().cloned().fold(f64::INFINITY, f64::min) };
-        
+
+    let freqs_ghz: Vec<f64> = freq_khz_list
+        .iter()
+        .map(|&khz| khz as f64 / 1000.0 / 1000.0)
+        .collect();
+
+    let avg = if freqs_ghz.is_empty() {
+        0.0
+    } else {
+        freqs_ghz.iter().sum::<f64>() / freqs_ghz.len() as f64
+    };
+    let max = if freqs_ghz.is_empty() {
+        0.0
+    } else {
+        freqs_ghz.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+    };
+    let min = if freqs_ghz.is_empty() {
+        0.0
+    } else {
+        freqs_ghz.iter().cloned().fold(f64::INFINITY, f64::min)
+    };
+
     let raw = json!({
         "cores": cores,
         "frequency_ghz": {
@@ -66,18 +91,21 @@ fn calculate_cpu_diag(cores: u64, freq_khz_list: Vec<u64>, throttle_count: u64) 
 
     let readable = format!(
         "コア数: {} | 周波数: 平均 {:.2} GHz [範囲: {:.2} - {:.2} GHz] | サーマル状態: {}",
-        cores, avg, min, max,
+        cores,
+        avg,
+        min,
+        max,
         if throttle_count > 0 {
-            format!("⚠️ 熱制限(スロットリング)検知！(累積発生数: {})", throttle_count)
+            format!(
+                "⚠️ 熱制限(スロットリング)検知！(累積発生数: {})",
+                throttle_count
+            )
         } else {
             "熱制限なし (正常)".to_string()
         }
     );
 
-    Ok(DiagnosticData {
-        raw,
-        readable,
-    })
+    Ok(DiagnosticData { raw, readable })
 }
 
 #[cfg(test)]
@@ -92,14 +120,26 @@ mod tests {
 
     impl SystemInterface for MockSystem {
         fn read_to_string<P: AsRef<Path>>(&self, path: P) -> Result<String, DiagnosticError> {
-            self.files.get(path.as_ref().to_str().unwrap())
+            self.files
+                .get(path.as_ref().to_str().unwrap())
                 .cloned()
-                .ok_or_else(|| DiagnosticError::DiagnosticFailed(format!("File not found: {}", path.as_ref().display())))
+                .ok_or_else(|| {
+                    DiagnosticError::DiagnosticFailed(format!(
+                        "File not found: {}",
+                        path.as_ref().display()
+                    ))
+                })
         }
         fn read_dir<P: AsRef<Path>>(&self, path: P) -> Result<Vec<PathBuf>, DiagnosticError> {
-            self.dirs.get(path.as_ref().to_str().unwrap())
+            self.dirs
+                .get(path.as_ref().to_str().unwrap())
                 .cloned()
-                .ok_or_else(|| DiagnosticError::DiagnosticFailed(format!("Dir not found: {}", path.as_ref().display())))
+                .ok_or_else(|| {
+                    DiagnosticError::DiagnosticFailed(format!(
+                        "Dir not found: {}",
+                        path.as_ref().display()
+                    ))
+                })
         }
         fn run_command(&self, _program: &str, _args: &[&str]) -> Result<String, DiagnosticError> {
             Ok("".to_string())
@@ -109,18 +149,35 @@ mod tests {
     #[test]
     fn test_cpu_diag_mock() {
         let mut files = std::collections::HashMap::new();
-        files.insert("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq".to_string(), "3000000".to_string());
-        files.insert("/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq".to_string(), "3000000".to_string());
-        files.insert("/sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count".to_string(), "0".to_string());
-        files.insert("/sys/devices/system/cpu/cpu1/thermal_throttle/core_throttle_count".to_string(), "0".to_string());
+        files.insert(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq".to_string(),
+            "3000000".to_string(),
+        );
+        files.insert(
+            "/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq".to_string(),
+            "3000000".to_string(),
+        );
+        files.insert(
+            "/sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count".to_string(),
+            "0".to_string(),
+        );
+        files.insert(
+            "/sys/devices/system/cpu/cpu1/thermal_throttle/core_throttle_count".to_string(),
+            "0".to_string(),
+        );
 
         let mut dirs = std::collections::HashMap::new();
-        dirs.insert("/sys/devices/system/cpu".to_string(), vec![
-            PathBuf::from("/sys/devices/system/cpu/cpu0"),
-            PathBuf::from("/sys/devices/system/cpu/cpu1"),
-        ]);
+        dirs.insert(
+            "/sys/devices/system/cpu".to_string(),
+            vec![
+                PathBuf::from("/sys/devices/system/cpu/cpu0"),
+                PathBuf::from("/sys/devices/system/cpu/cpu1"),
+            ],
+        );
 
-        let diag = CpuFrequencyDiagnostic { sys: MockSystem { files, dirs } };
+        let diag = CpuFrequencyDiagnostic {
+            sys: MockSystem { files, dirs },
+        };
         let result = diag.run();
         assert!(result.is_ok());
         let data = result.unwrap();

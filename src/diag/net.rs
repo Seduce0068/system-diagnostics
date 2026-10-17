@@ -1,4 +1,6 @@
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
+use crate::diag::{
+    error::DiagnosticError, sys_interface::SystemInterface, Diagnostic, DiagnosticData,
+};
 use serde_json::json;
 
 pub struct LocalGatewayPingDiagnostic<S: SystemInterface> {
@@ -6,10 +8,12 @@ pub struct LocalGatewayPingDiagnostic<S: SystemInterface> {
 }
 
 impl<S: SystemInterface> Diagnostic for LocalGatewayPingDiagnostic<S> {
-    fn id(&self) -> &str { "local_gateway_ping" }
+    fn id(&self) -> &str {
+        "local_gateway_ping"
+    }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let content = self.sys.read_to_string("/proc/net/route")?;
-        
+
         let mut iface_gw = None;
         for line in content.lines().skip(1) {
             let fields: Vec<&str> = line.split_whitespace().collect();
@@ -21,11 +25,16 @@ impl<S: SystemInterface> Diagnostic for LocalGatewayPingDiagnostic<S> {
                 }
             }
         }
-        
-        let (interface, gateway_ip) = iface_gw.ok_or_else(|| DiagnosticError::DiagnosticFailed("デフォルトゲートウェイが見つかりません".into()))?;
-        
-        let stdout = self.sys.run_command("ping", &["-c", "3", "-W", "1", "-I", &interface, &gateway_ip])?;
-            
+
+        let (interface, gateway_ip) = iface_gw.ok_or_else(|| {
+            DiagnosticError::DiagnosticFailed("デフォルトゲートウェイが見つかりません".into())
+        })?;
+
+        let stdout = self.sys.run_command(
+            "ping",
+            &["-c", "3", "-W", "1", "-I", &interface, &gateway_ip],
+        )?;
+
         calculate_net_diag(interface, gateway_ip, &stdout)
     }
 }
@@ -35,29 +44,36 @@ fn parse_gateway_ip(hex_ip: &str) -> Option<String> {
         let bytes = (0..4)
             .map(|i| u8::from_str_radix(&hex_ip[i * 2..i * 2 + 2], 16).unwrap_or(0))
             .collect::<Vec<u8>>();
-        Some(format!("{}.{}.{}.{}", bytes[3], bytes[2], bytes[1], bytes[0]))
+        Some(format!(
+            "{}.{}.{}.{}",
+            bytes[3], bytes[2], bytes[1], bytes[0]
+        ))
     } else {
         None
     }
 }
 
-fn calculate_net_diag(interface: String, gateway_ip: String, ping_stdout: &str) -> Result<DiagnosticData, DiagnosticError> {
+fn calculate_net_diag(
+    interface: String,
+    gateway_ip: String,
+    ping_stdout: &str,
+) -> Result<DiagnosticData, DiagnosticError> {
     let mut loss = "100%".to_string();
     for line in ping_stdout.lines() {
         if line.contains("packet loss") {
             if let Some(pct_idx) = line.find("%") {
                 let start = line[..pct_idx].rfind(' ').unwrap_or(0);
-                loss = line[start..pct_idx+1].trim().to_string();
+                loss = line[start..pct_idx + 1].trim().to_string();
             }
         }
     }
-    
+
     let mut rtt_min = None;
     let mut rtt_avg = None;
     let mut rtt_max = None;
     let mut rtt_mdev = None;
     let mut rtt_str = "計測不可".to_string();
-    
+
     for line in ping_stdout.lines() {
         if line.starts_with("rtt min/avg/max") {
             let parts: Vec<&str> = line.split('=').collect();
@@ -68,12 +84,15 @@ fn calculate_net_diag(interface: String, gateway_ip: String, ping_stdout: &str) 
                     rtt_min = rtt_vals[0].parse::<f64>().ok();
                     rtt_avg = rtt_vals[1].parse::<f64>().ok();
                     rtt_max = rtt_vals[2].parse::<f64>().ok();
-                    rtt_mdev = rtt_vals[3].split(' ').next().and_then(|v| v.parse::<f64>().ok());
+                    rtt_mdev = rtt_vals[3]
+                        .split(' ')
+                        .next()
+                        .and_then(|v| v.parse::<f64>().ok());
                 }
             }
         }
     }
-    
+
     let raw = json!({
         "gateway": gateway_ip,
         "interface": interface,
@@ -91,10 +110,7 @@ fn calculate_net_diag(interface: String, gateway_ip: String, ping_stdout: &str) 
         gateway_ip, interface, loss, rtt_str
     );
 
-    Ok(DiagnosticData {
-        raw,
-        readable,
-    })
+    Ok(DiagnosticData { raw, readable })
 }
 
 #[cfg(test)]

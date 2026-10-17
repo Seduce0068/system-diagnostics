@@ -1,4 +1,6 @@
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
+use crate::diag::{
+    error::DiagnosticError, sys_interface::SystemInterface, Diagnostic, DiagnosticData,
+};
 use serde_json::json;
 
 pub struct ActiveUsersSshDiagnostic<S: SystemInterface> {
@@ -6,25 +8,30 @@ pub struct ActiveUsersSshDiagnostic<S: SystemInterface> {
 }
 
 impl<S: SystemInterface> Diagnostic for ActiveUsersSshDiagnostic<S> {
-    fn id(&self) -> &str { "active_ssh_users" }
+    fn id(&self) -> &str {
+        "active_ssh_users"
+    }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let who_output = self.sys.run_command("who", &[]);
         let user_count = match who_output {
             Ok(stdout) => stdout.trim().lines().count(),
             _ => 0,
         };
-        
+
         let mut fail_count = 0;
         let mut auth_check_status = "ok".to_string();
-        
+
         let is_systemd = std::path::Path::new("/run/systemd/system").exists();
         if !is_systemd {
             auth_check_status = "not_available".to_string();
         } else if !self.has_journal_permission() {
             auth_check_status = "permission_denied".to_string();
         } else {
-            let ssh_log = self.sys.run_command("journalctl", &["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"]);
-                
+            let ssh_log = self.sys.run_command(
+                "journalctl",
+                &["-u", "ssh", "-u", "sshd", "-n", "30", "--no-pager"],
+            );
+
             if let Ok(stdout) = ssh_log {
                 for line in stdout.lines() {
                     if line.contains("Failed password") || line.contains("Invalid user") {
@@ -33,14 +40,17 @@ impl<S: SystemInterface> Diagnostic for ActiveUsersSshDiagnostic<S> {
                 }
             }
         }
-        
+
         calculate_user_diag(user_count, fail_count, auth_check_status)
     }
 }
 
 impl<S: SystemInterface> ActiveUsersSshDiagnostic<S> {
     fn has_journal_permission(&self) -> bool {
-        if let Ok(_) = self.sys.run_command("journalctl", &["-n", "1", "--no-pager"]) {
+        if let Ok(_) = self
+            .sys
+            .run_command("journalctl", &["-n", "1", "--no-pager"])
+        {
             true
         } else {
             false
@@ -48,13 +58,17 @@ impl<S: SystemInterface> ActiveUsersSshDiagnostic<S> {
     }
 }
 
-fn calculate_user_diag(user_count: usize, fail_count: u64, status: String) -> Result<DiagnosticData, DiagnosticError> {
+fn calculate_user_diag(
+    user_count: usize,
+    fail_count: u64,
+    status: String,
+) -> Result<DiagnosticData, DiagnosticError> {
     let raw = json!({
         "active_users": user_count,
         "ssh_auth_failures": fail_count,
         "ssh_auth_status": status
     });
-    
+
     let readable = format!(
         "ログイン中のアクティブユーザー: {}名 | SSH認証失敗数: {}件 {}",
         user_count,
@@ -65,11 +79,8 @@ fn calculate_user_diag(user_count: usize, fail_count: u64, status: String) -> Re
             _ => "".to_string(),
         }
     );
-    
-    Ok(DiagnosticData {
-        raw,
-        readable,
-    })
+
+    Ok(DiagnosticData { raw, readable })
 }
 
 #[cfg(test)]

@@ -24,8 +24,16 @@ fn print_diff(val1: &serde_json::Value, val2: &serde_json::Value, path: String) 
     }
     match (val1, val2) {
         (serde_json::Value::Object(map1), serde_json::Value::Object(map2)) => {
-            for key in map1.keys().chain(map2.keys()).collect::<std::collections::HashSet<_>>() {
-                let p = if path.is_empty() { key.to_string() } else { format!("{}.{}", path, key) };
+            for key in map1
+                .keys()
+                .chain(map2.keys())
+                .collect::<std::collections::HashSet<_>>()
+            {
+                let p = if path.is_empty() {
+                    key.to_string()
+                } else {
+                    format!("{}.{}", path, key)
+                };
                 match (map1.get(key), map2.get(key)) {
                     (Some(v1), Some(v2)) => print_diff(v1, v2, p),
                     (Some(_), None) => println!("Removed: {}", p),
@@ -77,11 +85,15 @@ fn main() -> Result<()> {
                         current.insert(d.id().to_string(), data.raw);
                     }
                     Err(e) => {
-                        eprintln!("⚠️ 警告: 診断 '{}' が失敗したため、比較から除外されました: {}", d.id(), e);
+                        eprintln!(
+                            "⚠️ 警告: 診断 '{}' が失敗したため、比較から除外されました: {}",
+                            d.id(),
+                            e
+                        );
                     }
                 }
             }
-            
+
             let current_json = serde_json::Value::Object(current);
             if current_json == baseline_json {
                 println!("No drift detected.");

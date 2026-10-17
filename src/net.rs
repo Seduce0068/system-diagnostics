@@ -7,5 +7,7 @@ pub fn get_default_interface() -> Result<String, DiagnosticError> {
             return Ok(interface.name);
         }
     }
-    Err(DiagnosticError::DiagnosticFailed("アクティブなネットワークインターフェースが見つかりません".into()))
+    Err(DiagnosticError::DiagnosticFailed(
+        "アクティブなネットワークインターフェースが見つかりません".into(),
+    ))
 }

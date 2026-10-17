@@ -1,4 +1,6 @@
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
+use crate::diag::{
+    error::DiagnosticError, sys_interface::SystemInterface, Diagnostic, DiagnosticData,
+};
 use serde_json::json;
 
 pub struct LanDriverDiagnostic<S: SystemInterface> {
@@ -49,7 +51,8 @@ impl<S: SystemInterface> Diagnostic for LanDriverDiagnostic<S> {
                                 iface_name
                             ));
                         } else {
-                            normals.push(format!("有線LAN ({}) ドライバ: {} (正常)", iface_name, drv));
+                            normals
+                                .push(format!("有線LAN ({}) ドライバ: {} (正常)", iface_name, drv));
                         }
 
                         interfaces_data.push(json!({
@@ -115,14 +118,20 @@ mod tests {
         fn read_to_string<P: AsRef<Path>>(&self, path: P) -> Result<String, DiagnosticError> {
             let p = path.as_ref().to_path_buf();
             self.files.get(&p).cloned().ok_or_else(|| {
-                DiagnosticError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"))
+                DiagnosticError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "file not found",
+                ))
             })
         }
 
         fn read_dir<P: AsRef<Path>>(&self, path: P) -> Result<Vec<PathBuf>, DiagnosticError> {
             let p = path.as_ref().to_path_buf();
             self.dirs.get(&p).cloned().ok_or_else(|| {
-                DiagnosticError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "dir not found"))
+                DiagnosticError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "dir not found",
+                ))
             })
         }
 
@@ -138,7 +147,10 @@ mod tests {
 
         dirs.insert(
             PathBuf::from("/sys/class/net"),
-            vec![PathBuf::from("/sys/class/net/enp4s0"), PathBuf::from("/sys/class/net/lo")],
+            vec![
+                PathBuf::from("/sys/class/net/enp4s0"),
+                PathBuf::from("/sys/class/net/lo"),
+            ],
         );
 
         files.insert(
@@ -161,9 +173,16 @@ mod tests {
         let res = diag.run().unwrap();
 
         assert!(res.raw["blacklist_r8169_active"].as_bool().unwrap());
-        assert_eq!(res.raw["interfaces"][0]["driver"].as_str().unwrap(), "r8168");
-        assert!(res.raw["interfaces"][0]["issue_detected"].as_bool().unwrap());
-        assert!(res.readable.contains("⚠️ 警告: 有線LAN (enp4s0) で不具合の多い独自ドライバ (r8168) が使用されています"));
+        assert_eq!(
+            res.raw["interfaces"][0]["driver"].as_str().unwrap(),
+            "r8168"
+        );
+        assert!(res.raw["interfaces"][0]["issue_detected"]
+            .as_bool()
+            .unwrap());
+        assert!(res.readable.contains(
+            "⚠️ 警告: 有線LAN (enp4s0) で不具合の多い独自ドライバ (r8168) が使用されています"
+        ));
     }
 
     #[test]
@@ -188,8 +207,15 @@ mod tests {
         let res = diag.run().unwrap();
 
         assert!(!res.raw["blacklist_r8169_active"].as_bool().unwrap());
-        assert_eq!(res.raw["interfaces"][0]["driver"].as_str().unwrap(), "r8169");
-        assert!(!res.raw["interfaces"][0]["issue_detected"].as_bool().unwrap());
-        assert!(res.readable.contains("有線LAN (enp4s0) ドライバ: r8169 (正常)"));
+        assert_eq!(
+            res.raw["interfaces"][0]["driver"].as_str().unwrap(),
+            "r8169"
+        );
+        assert!(!res.raw["interfaces"][0]["issue_detected"]
+            .as_bool()
+            .unwrap());
+        assert!(res
+            .readable
+            .contains("有線LAN (enp4s0) ドライバ: r8169 (正常)"));
     }
 }

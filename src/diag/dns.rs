@@ -1,9 +1,11 @@
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError};
+use crate::diag::{error::DiagnosticError, Diagnostic, DiagnosticData};
 use serde_json::json;
 
 pub struct DnsLatencyDiagnostic;
 impl Diagnostic for DnsLatencyDiagnostic {
-    fn id(&self) -> &str { "dns_latency" }
+    fn id(&self) -> &str {
+        "dns_latency"
+    }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         use std::net::ToSocketAddrs;
         use std::time::Instant;
@@ -40,9 +42,14 @@ impl Diagnostic for DnsLatencyDiagnostic {
     }
 }
 
-fn calculate_dns_diag(dns_servers: Vec<String>, latencies: std::collections::HashMap<String, Option<f64>>) -> Result<DiagnosticData, DiagnosticError> {
+fn calculate_dns_diag(
+    dns_servers: Vec<String>,
+    latencies: std::collections::HashMap<String, Option<f64>>,
+) -> Result<DiagnosticData, DiagnosticError> {
     if latencies.is_empty() {
-        return Err(DiagnosticError::DiagnosticFailed("DNS解決結果がありません".into()));
+        return Err(DiagnosticError::DiagnosticFailed(
+            "DNS解決結果がありません".into(),
+        ));
     }
 
     let mut results = Vec::new();
@@ -74,14 +81,15 @@ fn calculate_dns_diag(dns_servers: Vec<String>, latencies: std::collections::Has
 
     let readable = format!(
         "DNSサーバー: {} / 解決時間: {}",
-        if dns_servers.is_empty() { "不明".to_string() } else { dns_servers.join(", ") },
+        if dns_servers.is_empty() {
+            "不明".to_string()
+        } else {
+            dns_servers.join(", ")
+        },
         results.join(", ")
     );
 
-    Ok(DiagnosticData {
-        raw,
-        readable,
-    })
+    Ok(DiagnosticData { raw, readable })
 }
 
 #[cfg(test)]
@@ -107,4 +115,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

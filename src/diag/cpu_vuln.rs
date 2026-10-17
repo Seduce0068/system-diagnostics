@@ -1,4 +1,6 @@
-use crate::diag::{Diagnostic, DiagnosticData, error::DiagnosticError, sys_interface::SystemInterface};
+use crate::diag::{
+    error::DiagnosticError, sys_interface::SystemInterface, Diagnostic, DiagnosticData,
+};
 use serde_json::json;
 
 pub struct CpuVulnerabilityDiagnostic<S: SystemInterface> {
@@ -6,33 +8,39 @@ pub struct CpuVulnerabilityDiagnostic<S: SystemInterface> {
 }
 
 impl<S: SystemInterface> Diagnostic for CpuVulnerabilityDiagnostic<S> {
-    fn id(&self) -> &str { "cpu_vulnerability" }
+    fn id(&self) -> &str {
+        "cpu_vulnerability"
+    }
     fn run(&self) -> Result<DiagnosticData, DiagnosticError> {
         let mut vuln_map = std::collections::HashMap::new();
         let vulns = vec!["meltdown", "spectre_v1", "spectre_v2", "mds", "l1tf"];
-        
+
         for vuln in vulns {
             let path = format!("/sys/devices/system/cpu/vulnerabilities/{}", vuln);
             if let Ok(content) = self.sys.read_to_string(path) {
                 vuln_map.insert(vuln.to_string(), content.trim().to_string());
             }
         }
-        
+
         calculate_cpu_vuln_diag(vuln_map)
     }
 }
 
-fn calculate_cpu_vuln_diag(vuln_map: std::collections::HashMap<String, String>) -> Result<DiagnosticData, DiagnosticError> {
+fn calculate_cpu_vuln_diag(
+    vuln_map: std::collections::HashMap<String, String>,
+) -> Result<DiagnosticData, DiagnosticError> {
     if vuln_map.is_empty() {
-        return Err(DiagnosticError::DiagnosticFailed("CPU脆弱性緩和ステータスを取得できませんでした".into()));
+        return Err(DiagnosticError::DiagnosticFailed(
+            "CPU脆弱性緩和ステータスを取得できませんでした".into(),
+        ));
     }
-    
+
     let mut status_lines = Vec::new();
     let mut statuses = Vec::new();
-    
+
     let mut keys: Vec<_> = vuln_map.keys().collect();
     keys.sort();
-    
+
     for vuln in keys {
         let text = vuln_map.get(vuln).unwrap();
         let short_text = if text.len() > 25 {
@@ -40,10 +48,11 @@ fn calculate_cpu_vuln_diag(vuln_map: std::collections::HashMap<String, String>) 
         } else {
             text.to_string()
         };
-        
-        let is_vuln = text.to_lowercase().contains("vulnerable") || text.to_lowercase().contains("susceptible");
+
+        let is_vuln = text.to_lowercase().contains("vulnerable")
+            || text.to_lowercase().contains("susceptible");
         let mark = if is_vuln { "⚠️" } else { "🛡️" };
-        
+
         status_lines.push(format!("{}{} ({})", mark, vuln, short_text));
         statuses.push(json!({
             "vulnerability": vuln,
@@ -51,7 +60,7 @@ fn calculate_cpu_vuln_diag(vuln_map: std::collections::HashMap<String, String>) 
             "is_vulnerable": is_vuln
         }));
     }
-    
+
     let raw = json!({
         "vulnerabilities": statuses
     });
@@ -71,7 +80,7 @@ mod tests {
     fn test_calculate_cpu_vuln_diag_normal() {
         let mut map = HashMap::new();
         map.insert("meltdown".to_string(), "Mitigation: PTI".to_string());
-        
+
         let result = calculate_cpu_vuln_diag(map);
         assert!(result.is_ok());
         let data = result.unwrap();
