@@ -32,10 +32,10 @@ impl<S: SystemInterface> Diagnostic for LanDriverDiagnostic<S> {
                     let mut pci_id = None;
 
                     for line in uevent_content.lines() {
-                        if line.starts_with("DRIVER=") {
-                            driver = Some(line["DRIVER=".len()..].trim().to_string());
-                        } else if line.starts_with("PCI_ID=") {
-                            pci_id = Some(line["PCI_ID=".len()..].trim().to_string());
+                        if let Some(value) = line.strip_prefix("DRIVER=") {
+                            driver = Some(value.trim().to_string());
+                        } else if let Some(value) = line.strip_prefix("PCI_ID=") {
+                            pci_id = Some(value.trim().to_string());
                         }
                     }
 

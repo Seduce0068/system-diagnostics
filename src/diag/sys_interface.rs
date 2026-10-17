@@ -13,7 +13,7 @@ pub struct RealSystem;
 
 impl SystemInterface for RealSystem {
     fn read_to_string<P: AsRef<Path>>(&self, path: P) -> Result<String, DiagnosticError> {
-        Ok(std::fs::read_to_string(path).map_err(DiagnosticError::Io)?)
+        std::fs::read_to_string(path).map_err(DiagnosticError::Io)
     }
     fn read_dir<P: AsRef<Path>>(
         &self,

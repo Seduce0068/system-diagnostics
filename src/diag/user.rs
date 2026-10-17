@@ -47,14 +47,9 @@ impl<S: SystemInterface> Diagnostic for ActiveUsersSshDiagnostic<S> {
 
 impl<S: SystemInterface> ActiveUsersSshDiagnostic<S> {
     fn has_journal_permission(&self) -> bool {
-        if let Ok(_) = self
-            .sys
+        self.sys
             .run_command("journalctl", &["-n", "1", "--no-pager"])
-        {
-            true
-        } else {
-            false
-        }
+            .is_ok()
     }
 }
 

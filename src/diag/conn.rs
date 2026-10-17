@@ -48,7 +48,7 @@ fn calculate_conn_diag(
     }
 
     let mut ip_counts: Vec<(String, usize)> = remote_ips.into_iter().collect();
-    ip_counts.sort_by(|a, b| b.1.cmp(&a.1));
+    ip_counts.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     let top_dest: Vec<Value> = ip_counts
         .iter()
         .take(3)
