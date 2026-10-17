@@ -1,0 +1,21 @@
+# 個人リポジトリ共通の再利用可能ワークフロー
+# （onoderakeita/workflows の rust-gates.yml）へ委譲する。
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    uses: onoderakeita/workflows/.github/workflows/rust-gates.yml@v1
