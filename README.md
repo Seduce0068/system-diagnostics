@@ -20,7 +20,16 @@ sudo cargo run -- save baseline.json
 
 # 保存したベースラインと現在の状態を比較
 sudo cargo run -- compare baseline.json
+
+# リンク/疎通の変化を監視し、変化時に証跡を記録
+cargo run -- watch --interface enp4s0 --interval 5
 ```
+
+`watch` は carrier、IPv4、既定経路、ゲートウェイ到達性、上位網到達性、
+DNS 解決、TCP 接続を定期測定し、状態が変化した時点の
+コマンド出力一式（`ip`、`nmcli`、`journalctl` 等）を JSONL で追記する。
+既定の保存先は `$XDG_STATE_HOME/system-diag/net-watch.jsonl`
+（未設定時は `~/.local/state/system-diag/net-watch.jsonl`）。
 
 ## 4. 診断内容
 

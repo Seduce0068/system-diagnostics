@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
-use system_diag_tool::diag;
+use std::time::Duration;
+use system_diag_tool::{diag, watch};
 
 #[derive(Parser)]
 #[command(author, version, about = "System Diagnostic Tool")]
@@ -14,8 +15,29 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Run,
-    Save { path: PathBuf },
-    Compare { baseline: PathBuf },
+    Save {
+        path: PathBuf,
+    },
+    Compare {
+        baseline: PathBuf,
+    },
+    /// リンク状態と疎通の変化を監視し、変化時に証跡を記録する
+    Watch {
+        #[arg(long, default_value = "enp4s0")]
+        interface: String,
+        /// 測定間隔（秒）
+        #[arg(long, default_value_t = 5)]
+        interval: u64,
+        /// 証跡の追記先（既定: $XDG_STATE_HOME/system-diag/net-watch.jsonl）
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// 1 回だけ測定して終了する
+        #[arg(long)]
+        once: bool,
+        /// 標準出力への通知を抑制する
+        #[arg(long)]
+        quiet: bool,
+    },
 }
 
 fn print_diff(val1: &serde_json::Value, val2: &serde_json::Value, path: String) {
@@ -101,6 +123,22 @@ fn main() -> Result<()> {
                 println!("Drift detected!");
                 print_diff(&baseline_json, &current_json, "".to_string());
             }
+        }
+        Commands::Watch {
+            interface,
+            interval,
+            out,
+            once,
+            quiet,
+        } => {
+            let cfg = watch::WatchConfig {
+                interface,
+                interval: Duration::from_secs(interval.max(1)),
+                out: out.unwrap_or_else(watch::default_log_path),
+                once,
+                quiet,
+            };
+            watch::run(&cfg)?;
         }
     }
     Ok(())
