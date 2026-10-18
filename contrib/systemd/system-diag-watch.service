@@ -1,0 +1,13 @@
+[Unit]
+Description=ネットワーク状態の変化を記録する監視 (system-diag watch)
+
+[Service]
+Type=simple
+# 環境に合わせて書き換える（WorkingDirectory と ExecStart の絶対パス）
+WorkingDirectory=%h/ドキュメント/作業用/rustscript/システム診断
+ExecStart=%h/ドキュメント/作業用/rustscript/システム診断/target/release/system-diag-tool watch --interface enp4s0 --interval 5
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

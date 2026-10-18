@@ -31,6 +31,9 @@ DNS 解決、TCP 接続を定期測定し、状態が変化した時点の
 既定の保存先は `$XDG_STATE_HOME/system-diag/net-watch.jsonl`
 （未設定時は `~/.local/state/system-diag/net-watch.jsonl`）。
 
+不通発生時の切り分け手順と常駐方法は [RUNBOOK.md](RUNBOOK.md) を
+参照してください。
+
 ## 4. 診断内容
 
 - **システム:** 稼働時間、ロードアベレージ
