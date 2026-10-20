@@ -28,6 +28,13 @@ cargo run -- watch --interface enp4s0 --interval 5
 `watch` は carrier、IPv4、既定経路、ゲートウェイ到達性、上位網到達性、
 DNS 解決、TCP 接続を定期測定し、状態が変化した時点の
 コマンド出力一式（`ip`、`nmcli`、`journalctl` 等）を JSONL で追記する。
+TCP は 2 経路を別々に記録する。
+
+- `tcp_ok`: `1.1.1.1:443`（AdGuard CLI の透過プロキシ経由）
+- `direct_tcp_ok`: `1.1.1.1:53`（プロキシ範囲外の直接接続）
+
+両者の差から、プロキシ層とネットワーク層のどちらが壊れたかを
+事後に判定できる。
 既定の保存先は `$XDG_STATE_HOME/system-diag/net-watch.jsonl`
 （未設定時は `~/.local/state/system-diag/net-watch.jsonl`）。
 

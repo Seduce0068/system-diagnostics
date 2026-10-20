@@ -23,7 +23,16 @@ const PING_TARGET: &str = "8.8.8.8";
 /// DNS 解決確認に使うホスト名。
 const DNS_PROBE_HOST: &str = "www.google.com";
 /// TCP 到達性確認に使うアドレス。
+///
+/// AdGuard CLI の透過プロキシ（`filtered_ports: 80:5221,5300:49151`）を
+/// 経由するアプリ経路。ユーザーが実際に使う経路の健全性を測る。
 const TCP_PROBE_ADDR: &str = "1.1.1.1:443";
+/// 透過プロキシを経由しない直接 TCP の確認先。
+///
+/// ポート 53 は AdGuard の `filtered_ports` の範囲外にあり、
+/// OS とルーターの TCP 経路そのものを測る。`tcp_ok` と分けて
+/// 記録することで、プロキシ層とネットワーク層を切り分けられる。
+const TCP_DIRECT_PROBE_ADDR: &str = "1.1.1.1:53";
 /// 証跡 1 件あたりの最大保存バイト数。
 const EVIDENCE_LIMIT_BYTES: usize = 4096;
 
@@ -64,7 +73,10 @@ pub struct Snapshot {
     pub gateway_reachable: bool,
     pub internet_reachable: bool,
     pub dns_ok: bool,
+    /// アプリ経路（AdGuard CLI の透過プロキシ対象）の TCP 到達性。
     pub tcp_ok: bool,
+    /// 透過プロキシを経由しない直接 TCP の到達性。
+    pub direct_tcp_ok: bool,
 }
 
 impl Snapshot {
@@ -73,7 +85,12 @@ impl Snapshot {
         if !self.carrier || self.ipv4.is_none() || !self.default_route {
             return Health::Down;
         }
-        if self.gateway_reachable && self.internet_reachable && self.dns_ok && self.tcp_ok {
+        if self.gateway_reachable
+            && self.internet_reachable
+            && self.dns_ok
+            && self.tcp_ok
+            && self.direct_tcp_ok
+        {
             Health::Ok
         } else {
             Health::Degraded
@@ -105,6 +122,9 @@ impl Snapshot {
             if !self.tcp_ok {
                 reasons.push("tcp-failed");
             }
+            if !self.direct_tcp_ok {
+                reasons.push("direct-tcp-failed");
+            }
         }
         if reasons.is_empty() {
             "ok".to_string()
@@ -127,6 +147,7 @@ impl Snapshot {
             "internet_reachable": self.internet_reachable,
             "dns_ok": self.dns_ok,
             "tcp_ok": self.tcp_ok,
+            "direct_tcp_ok": self.direct_tcp_ok,
         })
     }
 }
@@ -226,7 +247,8 @@ pub fn probe(interface: &str) -> Snapshot {
     let gateway_reachable = gateway.as_deref().map(ping_ok).unwrap_or(false);
     let internet_reachable = carrier && ping_ok(PING_TARGET);
     let dns_ok = carrier && resolver_ok(DNS_PROBE_HOST);
-    let tcp_ok = carrier && tcp_ok(TCP_PROBE_ADDR);
+    let app_tcp_ok = carrier && tcp_ok(TCP_PROBE_ADDR);
+    let direct_tcp_ok = carrier && tcp_ok(TCP_DIRECT_PROBE_ADDR);
 
     Snapshot {
         interface: interface.to_string(),
@@ -240,7 +262,8 @@ pub fn probe(interface: &str) -> Snapshot {
         gateway_reachable,
         internet_reachable,
         dns_ok,
-        tcp_ok,
+        tcp_ok: app_tcp_ok,
+        direct_tcp_ok,
     }
 }
 
@@ -565,6 +588,7 @@ mod tests {
             internet_reachable,
             dns_ok,
             tcp_ok,
+            direct_tcp_ok: tcp_ok,
         }
     }
 
@@ -624,6 +648,24 @@ mod tests {
         let snap = snapshot(true, Some("192.168.128.111"), true, true, true, false, true);
         assert_eq!(snap.health(), Health::Degraded);
         assert_eq!(snap.reason(), "dns-failed");
+    }
+
+    #[test]
+    fn test_health_degraded_proxy_tcp_only() {
+        // 直接 TCP は成功し、プロキシ経由の TCP だけ失敗する場合。
+        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        snap.tcp_ok = false;
+        assert_eq!(snap.health(), Health::Degraded);
+        assert_eq!(snap.reason(), "tcp-failed");
+    }
+
+    #[test]
+    fn test_health_degraded_direct_tcp_only() {
+        // プロキシ経由の TCP は成功し、直接 TCP だけ失敗する場合。
+        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        snap.direct_tcp_ok = false;
+        assert_eq!(snap.health(), Health::Degraded);
+        assert_eq!(snap.reason(), "direct-tcp-failed");
     }
 
     #[test]
