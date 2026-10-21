@@ -75,7 +75,8 @@ sudo ./uninstall.sh
 
 ## 注意
 
-- 再起動は数秒の通信断を伴う。
+- 再起動は数秒の通信断を伴う。`adguard-cli` の停止には
+  最大 90 秒かかるため、service の `TimeoutStartSec` は 150 秒。
 - 本 watchdog は回避策であり、AdGuard CLI の修正ではない。
 - `adguard-cli` を意図的に停止している間は作動しない。
 - しきい値は環境に合わせて調整する。
