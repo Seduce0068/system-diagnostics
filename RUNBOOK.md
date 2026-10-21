@@ -126,14 +126,89 @@ AdGuard CLI v1.4.13 の透過プロキシは `CLOSE-WAIT` を解放せず、
   待受キューの `Recv-Q` または `CLOSE-WAIT` 件数が閾値を
   超えたら `systemctl restart adguard-cli` を実行する。
 - 定期再起動: 1 日 1 回など、低頻度で再起動する。
-- 上流修正: AdGuard CLI へバグ報告する。v1.4.13 が最新のため、
-  アップデート待ちでは解決しない。
+- 上流修正: AdGuard CLI へバグ報告する。stable は v1.4.13 だが、
+  v1.5.0-rc.2（2026-10-08）が公開済み。v1.5.0-nightly.10
+  （2026-10-21）は #125 を修正済みと release notes に記載。
+  #136（defunct root helper）は 2026-08-01 に「次の nightly で
+  修正」とコメントされ、closed。v1.5.0-rc.1 以降に含まれる
+  可能性が高い。ただし CLOSE_WAIT 漏れの修正は未確認。
 
 導入手順としきい値は `contrib/adguard-watchdog/README.md` を参照。
 未導入なら `sudo ./contrib/adguard-watchdog/install.sh` を実行する。
 
 再起動でリダイレクト先ポートは変わる。watchdog は
 `iptables -t nat -S AGCLI` から現在のポートを取得する。
+
+### 5.3 上流・コミュニティ調査（2026-10-21）
+
+今回の `CLOSE-WAIT` 蓄積と accept queue 飽和について、
+公開情報を「公式」「コミュニティ」「推測」に分けて整理した。
+
+公式:
+
+- stable は v1.4.13（2026-05-28）。v1.5.0 は rc.2
+  （2026-10-08）で、stable は未リリース。
+- v1.5.0-nightly.10（2026-10-21）の release notes は
+  #125「Fedora stops recognizing internet access」を
+  修正済みと記載。ただし #125 は open のまま
+  （v1.6 ラベル、Code Review）。
+- #125 は NetworkManager の port 80 検査が auto proxy で
+  `SYN_SENT` のまま受理されない事象。今回の 443 の
+  `CLOSE-WAIT` 蓄積とは同一ではない。
+- #141（SOCKS5 の route loop）は v1.5 で修正済み。
+  #136（defunct root helper）は 2026-08-01 に
+  「次の nightly で修正」とコメントされ、closed。
+  v1.5.0-rc.1 以降に含まれる可能性が高い。
+- `CLOSE-WAIT` 蓄積を明記した AdGuard CLI の公開 issue は
+  未発見。CoreLibs #2058 は Windows/Firefox の同種事象で
+  修正済みだが、CLI/Linux の証拠ではない。
+
+コミュニティ:
+
+- Reddit 2024-11-06: `localhost:38521` に `CLOSE_WAIT` が
+  数百件、時間とともに増加。コメント・解決策なし。
+  本文に「VPN runs」とあり、AdGuard VPN CLI の可能性がある。
+- Reddit 2026-09-01: Kubuntu + auto mode で接続が freeze。
+  protection を無効化すると復帰。標準の `filtered_ports`。
+- Reddit 2026-06-15/27: Fedora 等で auto mode にすると
+  internet が完全に不通。manual では system-wide filtering が
+  無効。解決策なし。
+- Reddit 2026-08-23: NetworkManager の limited connectivity に
+  対する port 80 / NetworkManager bypass の回避策。ただし
+  #125 のコメントでは Ubuntu/CachyOS で効かないとの報告。
+- AdGuard forum は 2023-10-13 に閉鎖（コミュニティ投稿による）。
+  現在の公式コミュニティは Reddit / Telegram / GitHub。
+  日本語圏の具体報告は今回の調査では未発見。AUR は 1.4.13-1 で、
+  `CLOSE_WAIT` の報告はなし。
+
+推測:
+
+- 今回の事象は再起動で復旧するため表面化しにくく、公開報告が
+  少ない。根本原因は未修正の可能性が高い。
+- nightly.10 の #125 修正は NetworkManager 経路の修正であり、
+  443 の `CLOSE-WAIT` 漏れを修正する証拠はない。
+- 443 を `filtered_ports` から除外すれば 443 の透過経路は
+  回避できるが、port 80 等の透過経路は残るため、根本修正では
+  ない。
+
+出典:
+
+- AdGuardCLI releases:
+  <https://github.com/AdguardTeam/AdGuardCLI/releases>
+- #125: <https://github.com/AdguardTeam/AdGuardCLI/issues/125>
+- #136: <https://github.com/AdguardTeam/AdGuardCLI/issues/136>
+- #141: <https://github.com/AdguardTeam/AdGuardCLI/issues/141>
+- CoreLibs #2058:
+  <https://github.com/AdguardTeam/CoreLibs/issues/2058>
+- Reddit CLOSE_WAIT:
+  <https://www.reddit.com/r/Adguard/comments/1gl8e6w/issue_open_tcp_connections_with_adguardcli_linux/>
+- Reddit Kubuntu:
+  <https://www.reddit.com/r/Adguard/comments/1w457ep/help_with_adguardcli_on_linux_kubuntu/>
+- Reddit Fedora:
+  <https://www.reddit.com/r/Fedora/comments/1ugtefs/adguard_cli_for_linux_help/>
+- Reddit limited connectivity:
+  <https://www.reddit.com/r/Adguard/comments/1vwc9jw/fix_limited_connectivity_connected_site_only_in/>
+- Official community: <https://adguard.com/discuss.html>
 
 ## 6. 参考（2026-10 時点の実測）
 
@@ -178,3 +253,27 @@ AdGuard CLI v1.4.13 の透過プロキシは `CLOSE-WAIT` を解放せず、
 - 結論: AdGuard CLI の透過プロキシが `CLOSE-WAIT` を解放せず、
   accept queue が飽和して新規 SYN を落とす。ルーターの NAT
   枯渇や NIC ハングではない。
+
+### 2026-10-21 21:07 の再発と root helper 異常
+
+- 21:07:53 に watchdog が port 37507 で
+  `recv_q=113 / send_q=128 / close_wait=64` を検出。
+  2 秒後の再サンプルでも `recv_q=105 / close_wait=65` のため、
+  21:07:55 に `adguard-cli` を再起動した。
+- 21:08:01 に新プロセス（PID 155273）が起動したが、
+  子の `adguard_root_helper`（PID 155296）が `defunct` になった。
+- 21:08:03 以降、`AGCLI` チェーンが存在せず、watchdog は
+  `iptables chain AGCLI not found; skip` を 30 秒ごとに記録。
+- 21:18 時点で `adguard-cli status` は
+  「The AdGuard proxy server is not running」を返し、
+  `AGCLI` チェーンも存在しない。直接 HTTPS は 200 で、
+  インターネット自体は通るが、AdGuard のフィルタは停止している。
+- これは #136（defunct root helper）と一致する。v1.4.13 は
+  影響を受け、v1.5.0-rc.1 以降に修正が含まれる可能性が高い。
+- 復旧: `sudo systemctl restart adguard-cli` の後、
+  `adguard-cli status`、`sudo iptables -t nat -S AGCLI`、
+  `ps -o pid,stat,cmd -C adguard_root_helper` を確認する。
+  それでも `defunct` の場合は v1.5.0-rc.2 以降を検討する。
+- 導入済み watchdog unit は `TimeoutStartSec=60` のまま。
+  `sudo ./contrib/adguard-watchdog/install.sh` を再実行して
+  150 秒へ更新する。

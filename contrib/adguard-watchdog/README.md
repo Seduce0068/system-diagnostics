@@ -78,6 +78,10 @@ sudo ./uninstall.sh
 - 再起動は数秒の通信断を伴う。`adguard-cli` の停止には
   最大 90 秒かかるため、service の `TimeoutStartSec` は 150 秒。
 - 本 watchdog は回避策であり、AdGuard CLI の修正ではない。
+- `AGCLI` チェーンが存在しない場合（root helper の defunct など）は
+  `iptables chain AGCLI not found; skip` を記録して終了する。
+  この状態ではフィルタは停止しているが、インターネットは直接通る。
+  watchdog は自動復旧しないため、手動で `adguard-cli` を再起動する。
 - `adguard-cli` を意図的に停止している間は作動しない。
 - しきい値は環境に合わせて調整する。
 - `ss` と `iptables` の出力形式が変わった場合は判定式を見直す。
