@@ -122,11 +122,15 @@ ethtool -i enp4s0    # driver: r8169 を確認
 AdGuard CLI v1.4.13 の透過プロキシは `CLOSE-WAIT` を解放せず、
 待受キューが飽和すると新規 TCP を落とす。次のいずれかで回避する。
 
-- 監視 watchdog: 待受キューの `Recv-Q` または `CLOSE-WAIT` 件数が
-  閾値を超えたら `systemctl restart adguard-cli` を実行する。
+- 監視 watchdog（実装済み）: `contrib/adguard-watchdog/`。
+  待受キューの `Recv-Q` または `CLOSE-WAIT` 件数が閾値を
+  超えたら `systemctl restart adguard-cli` を実行する。
 - 定期再起動: 1 日 1 回など、低頻度で再起動する。
 - 上流修正: AdGuard CLI へバグ報告する。v1.4.13 が最新のため、
   アップデート待ちでは解決しない。
+
+導入手順としきい値は `contrib/adguard-watchdog/README.md` を参照。
+未導入なら `sudo ./contrib/adguard-watchdog/install.sh` を実行する。
 
 再起動でリダイレクト先ポートは変わる。watchdog は
 `iptables -t nat -S AGCLI` から現在のポートを取得する。

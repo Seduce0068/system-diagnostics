@@ -1,0 +1,16 @@
+[Unit]
+Description=AdGuard CLI transparent proxy watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/adguard-watchdog.sh
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/adguard-watchdog
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=60
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+UMask=0077

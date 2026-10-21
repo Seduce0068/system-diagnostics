@@ -1,0 +1,29 @@
+# AdGuard CLI watchdog configuration.
+# Values are read by systemd's EnvironmentFile.
+
+# Service to restart.
+#SERVICE=adguard-cli
+
+# iptables NAT chain that holds the redirect rules.
+#CHAIN=AGCLI
+
+# Restart when Recv-Q reaches this percentage of the listen backlog.
+#QUEUE_THRESHOLD_PCT=75
+
+# Restart when the number of CLOSE-WAIT sockets reaches this value.
+#CLOSE_WAIT_THRESHOLD=100
+
+# Minimum seconds between restarts.
+#COOLDOWN_SECONDS=600
+
+# Seconds to wait before confirming a threshold violation.
+#CONFIRM_DELAY=2
+
+# Seconds to wait after a restart before logging the new state.
+#POST_RESTART_DELAY=2
+
+# Set to 1 to log decisions without restarting.
+#DRY_RUN=0
+
+# Set to 1 to log every queue sample.
+#VERBOSE=0
