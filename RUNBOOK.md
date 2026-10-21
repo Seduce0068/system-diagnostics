@@ -20,7 +20,7 @@
 
 2026-10-20 の事象では、ICMP と DNS は通るのに新規 TCP だけが
 失敗した。443 は AdGuard CLI の透過プロキシ経由なので、H3 を
-最初に切り分ける。
+最初に切り分ける。H3 は 2026-10-21 に確定した（6 章参照）。
 
 ## 3. 初動（ルーターに触る前に層を判定する）
 
@@ -37,7 +37,16 @@ curl -4 -sS -m 5 -o /dev/null -w '%{http_code}\n' https://www.google.com
 - 直接 TCP 成功・443 失敗: **H3**。3.2 へ進む。
 - 両方失敗: ネットワーク層。3.3 へ進む。
 
-### 3.2 AdGuard CLI の停止テスト
+### 3.2 AdGuard CLI の再起動（H3 の復旧）
+
+```bash
+sudo systemctl restart adguard-cli
+curl -4 -sS -m 5 -o /dev/null -w '%{http_code}\n' https://www.google.com
+```
+
+2026-10-21 の実測では、透過プロキシの待受キュー飽和と
+`CLOSE-WAIT` の蓄積が原因で、再起動により即時復旧した。
+再起動で直らない場合は、次の停止テストで切り分ける。
 
 ```bash
 sudo systemctl stop adguard-cli
@@ -94,7 +103,9 @@ systemctl --user status system-diag-watch.service
 ログ: `$XDG_STATE_HOME/system-diag/net-watch.jsonl`
 （未設定時は `~/.local/state/system-diag/net-watch.jsonl`）
 
-## 5. 恒久対策（H1 確定後）
+## 5. 恒久対策
+
+### 5.1 H1 確定後
 
 out-of-tree の `r8168` を撤去し、カーネル同梱の `r8169` に戻す。
 
@@ -105,6 +116,20 @@ ethtool -i enp4s0    # driver: r8169 を確認
 ```
 
 ロールバックする場合は `sudo apt install r8168-dkms`。
+
+### 5.2 H3 確定後（2026-10-21）
+
+AdGuard CLI v1.4.13 の透過プロキシは `CLOSE-WAIT` を解放せず、
+待受キューが飽和すると新規 TCP を落とす。次のいずれかで回避する。
+
+- 監視 watchdog: 待受キューの `Recv-Q` または `CLOSE-WAIT` 件数が
+  閾値を超えたら `systemctl restart adguard-cli` を実行する。
+- 定期再起動: 1 日 1 回など、低頻度で再起動する。
+- 上流修正: AdGuard CLI へバグ報告する。v1.4.13 が最新のため、
+  アップデート待ちでは解決しない。
+
+再起動でリダイレクト先ポートは変わる。watchdog は
+`iptables -t nat -S AGCLI` から現在のポートを取得する。
 
 ## 6. 参考（2026-10 時点の実測）
 
@@ -128,3 +153,24 @@ ethtool -i enp4s0    # driver: r8169 を確認
   `1.1.1.1:53` への接続は呼び出しプロセス所有（直接）。
 - 解釈: NIC の再交渉では直らず、長時間のリンク断で復旧した。
   H1 は否定寄りで、H3（AdGuard CLI のプロキシ故障）が最有力。
+
+### 2026-10-21 の確定（H3）
+
+- 19:12–19:54 の `tcp-failed` はすべて `tcp=false`、
+  `direct_tcp_ok=true`。直接 TCP（53）は正常で、AdGuard 経由の
+  443 だけが失敗した。
+- 障害時の実測:
+  - 透過プロキシの待受 `127.0.0.1:42667` が
+    `Recv-Q=129 / Send-Q=128`（上限 128）で飽和。
+  - `CLOSE-WAIT` が 176〜177 件。
+  - `TcpExtListenOverflows` / `TcpExtListenDrops` が
+    54,715 → 55,386 と増加。
+- 19:56:02 に `sudo systemctl restart adguard-cli` を実行。
+  リダイレクト先は 34349 に変わり、待受キュー 0/128、
+  `CLOSE-WAIT` 0、HTTPS は 200/204 で復旧した。
+- 再起動後、watch は 19:54:38 の `ok` を最後に、20:12 時点まで
+  新規レコードなし（状態変化なし）。`TcpExtListenOverflows` は
+  55,393 で、再起動後の増加は 7 件のみ。直接 TCP は全期間で成功。
+- 結論: AdGuard CLI の透過プロキシが `CLOSE-WAIT` を解放せず、
+  accept queue が飽和して新規 SYN を落とす。ルーターの NAT
+  枯渇や NIC ハングではない。
