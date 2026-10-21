@@ -37,7 +37,7 @@ sudo ./install.sh
 - `/etc/systemd/system/adguard-watchdog.timer`
 - `/etc/default/adguard-watchdog`（既存なら保持）
 
-タイマーは起動 2 分後と、前回実行の 30 秒後に実行される。
+タイマーは起動 2 分後と、前回起動の 30 秒後に実行される。
 
 ## 動作確認
 

@@ -19,6 +19,10 @@ pass() {
 ALLOW_NONROOT=1
 VERBOSE=0
 DRY_RUN=0
+SERVICE=adguard-cli
+CHAIN=AGCLI
+QUEUE_THRESHOLD_PCT=75
+CLOSE_WAIT_THRESHOLD=100
 
 iptables() {
     printf '%s\n' \
