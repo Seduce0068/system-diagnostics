@@ -250,6 +250,13 @@ sudo adguard-cli update
 sudo ./contrib/adguard-watchdog/install.sh
 ```
 
+注意: `sudo adguard-cli update` は installer が `/opt/adguard-cli` の
+所有者変更を `/dev/tty` で確認するため、非対話環境では失敗する。
+`/opt/adguard-cli` がサービスユーザー `koppe` の所有であることを
+確認し、`sudo` を付けずに `adguard-cli update` を実行する。
+SUID helper は installer が直接上書きせず、`.new` として配置され、
+再起動時に本体へ置き換わる。
+
 更新後の確認:
 
 ```bash
@@ -273,6 +280,21 @@ journalctl -u adguard-cli --since '-10 min' | grep -i 'root helper'
    例: `80:442,444:5221,5300:49151`（構文は実機で確認する）。
    HTTPS フィルタは無効になる。
 2. `proxy_mode` を `manual` に落とす。system-wide の透過は無効。
+
+実施結果（2026-10-24 16:10）:
+
+- v1.5.0 へ更新。`/opt/adguard-cli` の `adguard-cli`、
+  `adguard_root_helper`、`adguard_cli_nm`、`certutil` は
+  ed25519 署名を検証済み。
+- 再起動時に `adguard_root_helper.new` が本体へ置き換わり、
+  `root:root` と SUID を維持。
+- 再起動後、`Failed to send command to root helper` は 0 件、
+  defunct helper もなし。
+- `proxy.yaml` の変更は `detect_outbound_interface: true` の追加のみ。
+  `filtered_ports` と `https_filtering` は不変。
+- 実測: HTTPS 200、DNS 解決、TCP 443 すべて成功。
+- 継続監視: `CLOSE_WAIT` 件数と `Route loop detected`
+  （更新前から存在する 127.0.0.1:8000 宛ての警告）。
 
 ## 6. 参考（2026-10 時点の実測）
 
