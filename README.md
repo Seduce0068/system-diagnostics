@@ -37,6 +37,19 @@ TCP は 2 経路を別々に記録する。
 事後に判定できる。
 既定の保存先は `$XDG_STATE_HOME/system-diag/net-watch.jsonl`
 （未設定時は `~/.local/state/system-diag/net-watch.jsonl`）。
+JSONL は状態変化時のみ追記する。監視ループの生存確認は、
+同じディレクトリの `net-watch.heartbeat` を毎周期上書きして行う。
+常駐時はこの heartbeat の mtime を監視すること。
+
+`watch` は外部コマンドに上限時間を設け、失敗を次のように分類する。
+
+- `ok` / `degraded` / `down`: 測定が完了したうえでの判定。
+- `unknown`: `ip`、`ping`、`getent` の起動失敗やタイムアウトで
+  判定できない状態。ネットワーク障害とは区別する。
+
+各レコードは `schema_version: 2` と `event`
+（`started` / `changed` / `once`）を持ち、`evidence` は
+`stdout`、`stderr`、`exit_code`、`timed_out` を個別に保持する。
 
 不通発生時の切り分け手順と常駐方法は [RUNBOOK.md](RUNBOOK.md) を
 参照してください。

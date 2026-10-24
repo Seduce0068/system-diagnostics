@@ -5,6 +5,17 @@ use std::path::PathBuf;
 use std::time::Duration;
 use system_diag_tool::{diag, watch};
 
+/// `--interval` を 1 秒以上に制限する。
+fn parse_interval(value: &str) -> Result<u64, String> {
+    let seconds: u64 = value
+        .parse()
+        .map_err(|_| "interval は 1 以上の整数秒で指定してください".to_string())?;
+    if seconds == 0 {
+        return Err("interval は 1 以上で指定してください".to_string());
+    }
+    Ok(seconds)
+}
+
 #[derive(Parser)]
 #[command(author, version, about = "System Diagnostic Tool")]
 struct Cli {
@@ -25,8 +36,8 @@ enum Commands {
     Watch {
         #[arg(long, default_value = "enp4s0")]
         interface: String,
-        /// 測定間隔（秒）
-        #[arg(long, default_value_t = 5)]
+        /// 測定間隔（秒、1 以上）
+        #[arg(long, default_value_t = 5, value_parser = parse_interval)]
         interval: u64,
         /// 証跡の追記先（既定: $XDG_STATE_HOME/system-diag/net-watch.jsonl）
         #[arg(long)]
@@ -133,7 +144,7 @@ fn main() -> Result<()> {
         } => {
             let cfg = watch::WatchConfig {
                 interface,
-                interval: Duration::from_secs(interval.max(1)),
+                interval: Duration::from_secs(interval),
                 out: out.unwrap_or_else(watch::default_log_path),
                 once,
                 quiet,
@@ -142,4 +153,17 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_interval;
+
+    #[test]
+    fn parse_interval_rejects_zero_and_non_numeric() {
+        assert!(parse_interval("0").is_err());
+        assert!(parse_interval("x").is_err());
+        assert_eq!(parse_interval("1").unwrap(), 1);
+        assert_eq!(parse_interval("5").unwrap(), 5);
+    }
 }

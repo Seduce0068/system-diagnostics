@@ -103,6 +103,17 @@ systemctl --user status system-diag-watch.service
 ログ: `$XDG_STATE_HOME/system-diag/net-watch.jsonl`
 （未設定時は `~/.local/state/system-diag/net-watch.jsonl`）
 
+heartbeat: 同じディレクトリの `net-watch.heartbeat`
+（毎周期上書き。監視の生存確認はこの mtime で行う）
+
+`watch` は `WatchdogSec=60` で systemd に keep-alive を送る。
+`systemctl --user show -p WatchdogUSec -p NotifyAccess` で
+`60000000` と `main` を確認できる。
+
+JSONL は状態変化時のみ追記される。ログの mtime が止まっていても、
+状態が変わっていなければ異常ではない。停止の疑いがある場合は
+heartbeat の mtime と `systemctl --user status` を確認する。
+
 ## 5. 恒久対策
 
 ### 5.1 H1 確定後

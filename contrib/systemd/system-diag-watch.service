@@ -1,13 +1,38 @@
 [Unit]
 Description=ネットワーク状態の変化を記録する監視 (system-diag watch)
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
-# 環境に合わせて書き換える（WorkingDirectory と ExecStart の絶対パス）
-WorkingDirectory=%h/ドキュメント/作業用/rustscript/システム診断
-ExecStart=%h/ドキュメント/作業用/rustscript/システム診断/target/release/system-diag-tool watch --interface enp4s0 --interval 5
+# 環境に合わせて ExecStart の絶対パスを書き換える。
+# %S は $XDG_STATE_HOME（未設定時は ~/.local/state）。
+ExecStart=%h/ドキュメント/作業用/rustscript/システム診断/target/release/system-diag-tool watch --interface enp4s0 --interval 5 --out=%S/system-diag/net-watch.jsonl
+StateDirectory=system-diag
 Restart=on-failure
 RestartSec=10
+# メインループが周期完了ごとに WATCHDOG=1 を送る。
+WatchdogSec=60
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%S/system-diag
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0077
+# ProtectKernelModules= / ProtectKernelLogs= / ProtectClock= /
+# CapabilityBoundingSet= は user unit では使わない。いずれも
+# capability bounding set の変更を伴い、CAP_SETPCAP を持たない
+# user manager では status=218/CAPABILITIES で起動に失敗する。
+# system unit として動かす場合に限り追加してよい。
 
 [Install]
 WantedBy=default.target

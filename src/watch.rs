@@ -11,12 +11,14 @@
 use serde::Serialize;
 use serde_json::json;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
-use std::process::Command;
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 上位網の到達性確認に使う ICMP 宛先。
 const PING_TARGET: &str = "8.8.8.8";
@@ -35,6 +37,18 @@ const TCP_PROBE_ADDR: &str = "1.1.1.1:443";
 const TCP_DIRECT_PROBE_ADDR: &str = "1.1.1.1:53";
 /// 証跡 1 件あたりの最大保存バイト数。
 const EVIDENCE_LIMIT_BYTES: usize = 4096;
+/// 子プロセス終了後に stdout/stderr を回収する猶予。
+const DRAIN_LIMIT: Duration = Duration::from_millis(500);
+/// `ip` 1 回あたりの上限。
+const IP_TIMEOUT: Duration = Duration::from_secs(1);
+/// DNS 解決確認 1 回あたりの上限。
+const DNS_TIMEOUT: Duration = Duration::from_secs(2);
+/// ICMP 確認 1 回あたりの上限。`ping -W 1` より十分に長く取る。
+const PING_TIMEOUT: Duration = Duration::from_secs(2);
+/// 証跡採取コマンド 1 回あたりの上限。
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(2);
+/// タイムゾーン取得 1 回あたりの上限。
+const DATE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// 監視対象のヘルス状態。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -46,6 +60,8 @@ pub enum Health {
     Degraded,
     /// carrier 断、IPv4 不在、既定経路不在のいずれか。
     Down,
+    /// 監視器側の失敗（コマンド欠落・タイムアウト等）で判定できない。
+    Unknown,
 }
 
 impl Health {
@@ -55,6 +71,7 @@ impl Health {
             Health::Ok => "ok",
             Health::Degraded => "degraded",
             Health::Down => "down",
+            Health::Unknown => "unknown",
         }
     }
 }
@@ -63,6 +80,8 @@ impl Health {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub interface: String,
+    /// `/sys/class/net/<interface>` が存在するか。
+    pub interface_present: bool,
     pub carrier: bool,
     pub operstate: String,
     pub speed_mbps: Option<String>,
@@ -77,12 +96,22 @@ pub struct Snapshot {
     pub tcp_ok: bool,
     /// 透過プロキシを経由しない直接 TCP の到達性。
     pub direct_tcp_ok: bool,
+    /// 監視器側の測定失敗理由。空なら測定は完了している。
+    pub probe_errors: Vec<String>,
+    /// 必須チェックが監視器側の理由で測定できなかった場合 true。
+    pub measurement_failed: bool,
 }
 
 impl Snapshot {
     /// 測定結果からヘルス状態を判定する。
     pub fn health(&self) -> Health {
-        if !self.carrier || self.ipv4.is_none() || !self.default_route {
+        if !self.interface_present || !self.carrier {
+            return Health::Down;
+        }
+        if self.measurement_failed {
+            return Health::Unknown;
+        }
+        if self.ipv4.is_none() || !self.default_route {
             return Health::Down;
         }
         if self.gateway_reachable
@@ -99,17 +128,28 @@ impl Snapshot {
 
     /// 判定理由を `,` 区切りで返す。全成功時は `ok`。
     pub fn reason(&self) -> String {
-        let mut reasons: Vec<&str> = Vec::new();
-        if !self.carrier {
-            reasons.push("carrier-down");
+        if !self.interface_present {
+            return "interface-missing".to_string();
         }
+        if !self.carrier {
+            return "carrier-down".to_string();
+        }
+        if self.measurement_failed {
+            return if self.probe_errors.is_empty() {
+                "probe-error".to_string()
+            } else {
+                self.probe_errors.join(",")
+            };
+        }
+
+        let mut reasons: Vec<&str> = Vec::new();
         if self.ipv4.is_none() {
             reasons.push("no-ipv4");
         }
         if !self.default_route {
             reasons.push("no-default-route");
         }
-        if self.carrier && self.ipv4.is_some() && self.default_route {
+        if self.ipv4.is_some() && self.default_route {
             if !self.gateway_reachable {
                 reasons.push("gateway-unreachable");
             }
@@ -136,6 +176,7 @@ impl Snapshot {
     fn to_json(&self) -> serde_json::Value {
         json!({
             "interface": self.interface,
+            "interface_present": self.interface_present,
             "carrier": self.carrier,
             "operstate": self.operstate,
             "speed_mbps": self.speed_mbps,
@@ -148,6 +189,8 @@ impl Snapshot {
             "dns_ok": self.dns_ok,
             "tcp_ok": self.tcp_ok,
             "direct_tcp_ok": self.direct_tcp_ok,
+            "probe_errors": self.probe_errors,
+            "measurement_failed": self.measurement_failed,
         })
     }
 }
@@ -162,37 +205,95 @@ pub struct WatchConfig {
 }
 
 /// 証跡 1 件（実行したコマンドと出力）。
+///
+/// `out` は既存の jq クエリとの互換用の要約で、stdout が上限を超えると
+/// stderr/exit が切れる。`stdout`/`stderr`/`exit_code`/`timed_out` は
+/// それぞれ独立に保持する。
 #[derive(Debug, Serialize)]
 struct Evidence {
     cmd: String,
     out: String,
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    timed_out: bool,
+    elapsed_ms: u64,
+}
+
+impl Evidence {
+    fn sysfs(cmd: String, value: &str) -> Self {
+        let text = truncate_utf8(value, EVIDENCE_LIMIT_BYTES);
+        Self {
+            cmd,
+            out: text.clone(),
+            stdout: text,
+            stderr: String::new(),
+            exit_code: None,
+            signal: None,
+            timed_out: false,
+            elapsed_ms: 0,
+        }
+    }
+}
+
+fn interface_exists(interface: &str) -> bool {
+    !interface.is_empty()
+        && !interface.contains('/')
+        && interface != "."
+        && interface != ".."
+        && Path::new("/sys/class/net").join(interface).is_dir()
 }
 
 /// 監視ループを実行する。状態が変化するまで待機し続ける。
 pub fn run(cfg: &WatchConfig) -> std::io::Result<()> {
+    if !interface_exists(&cfg.interface) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("network interface not found: {}", cfg.interface),
+        ));
+    }
+
     let offset_seconds = parse_offset_seconds(&local_utc_offset());
     let mut previous: Option<(Health, String)> = None;
+    let mut cycle: u64 = 0;
+    let mut last_event_epoch: u64 = 0;
+    let mut warned_watchdog = false;
 
     loop {
+        let cycle_start = Instant::now();
         let snapshot = probe(&cfg.interface);
         let health = snapshot.health();
         let reason = snapshot.reason();
         let changed = previous
             .as_ref()
             .is_none_or(|(h, r)| *h != health || *r != reason);
+        let first = cycle == 0;
 
-        if changed || cfg.once {
+        if changed || cfg.once || first {
             let epoch = now_epoch();
             let evidence = capture(&cfg.interface);
+            let event = if cfg.once {
+                "once"
+            } else if first {
+                "started"
+            } else {
+                "changed"
+            };
             write_event(
                 cfg,
-                epoch,
-                offset_seconds,
-                health,
-                &reason,
-                &snapshot,
-                &evidence,
+                &EventRecord {
+                    event,
+                    epoch,
+                    offset_seconds,
+                    health,
+                    reason: &reason,
+                    snapshot: &snapshot,
+                    evidence: &evidence,
+                    duration_ms: cycle_start.elapsed().as_millis() as u64,
+                },
             )?;
+            last_event_epoch = epoch;
             if !cfg.quiet {
                 println!(
                     "{} [{}] {} (log: {})",
@@ -204,6 +305,23 @@ pub fn run(cfg: &WatchConfig) -> std::io::Result<()> {
             }
             previous = Some((health, reason));
         }
+
+        let duration_ms = cycle_start.elapsed().as_millis() as u64;
+        write_heartbeat(
+            cfg,
+            now_epoch(),
+            offset_seconds,
+            cycle,
+            duration_ms,
+            last_event_epoch,
+        )?;
+        if let Err(err) = notify_watchdog() {
+            if !warned_watchdog {
+                eprintln!("watchdog 通知に失敗: {}", err);
+                warned_watchdog = true;
+            }
+        }
+        cycle = cycle.saturating_add(1);
 
         if cfg.once {
             return Ok(());
@@ -235,23 +353,31 @@ pub fn default_log_path() -> PathBuf {
 
 /// 1 回分の測定を実行する。
 pub fn probe(interface: &str) -> Snapshot {
+    let interface_present = interface_exists(interface);
     let carrier = sysfs_value(interface, "carrier")
         .map(|v| v == "1")
         .unwrap_or(false);
     let operstate = sysfs_value(interface, "operstate").unwrap_or_else(|| "unknown".to_string());
     let speed_mbps = sysfs_value(interface, "speed");
     let mtu = sysfs_value(interface, "mtu");
-    let ipv4 = interface_ipv4(interface);
-    let gateway = default_gateway();
+
+    let mut probe_errors = Vec::new();
+    let ipv4 = interface_ipv4(interface, &mut probe_errors);
+    let gateway = default_gateway(&mut probe_errors);
     let default_route = gateway.is_some();
-    let gateway_reachable = gateway.as_deref().map(ping_ok).unwrap_or(false);
-    let internet_reachable = carrier && ping_ok(PING_TARGET);
-    let dns_ok = carrier && resolver_ok(DNS_PROBE_HOST);
+    let gateway_reachable = gateway
+        .as_deref()
+        .map(|gw| ping_ok(gw, &mut probe_errors))
+        .unwrap_or(false);
+    let internet_reachable = carrier && ping_ok(PING_TARGET, &mut probe_errors);
+    let dns_ok = carrier && resolver_ok(DNS_PROBE_HOST, &mut probe_errors);
     let app_tcp_ok = carrier && tcp_ok(TCP_PROBE_ADDR);
     let direct_tcp_ok = carrier && tcp_ok(TCP_DIRECT_PROBE_ADDR);
+    let measurement_failed = !probe_errors.is_empty();
 
     Snapshot {
         interface: interface.to_string(),
+        interface_present,
         carrier,
         operstate,
         speed_mbps,
@@ -264,39 +390,115 @@ pub fn probe(interface: &str) -> Snapshot {
         dns_ok,
         tcp_ok: app_tcp_ok,
         direct_tcp_ok,
+        probe_errors,
+        measurement_failed,
     }
 }
 
-fn write_event(
-    cfg: &WatchConfig,
+struct EventRecord<'a> {
+    event: &'a str,
     epoch: u64,
     offset_seconds: i64,
     health: Health,
-    reason: &str,
-    snapshot: &Snapshot,
-    evidence: &[Evidence],
-) -> std::io::Result<()> {
+    reason: &'a str,
+    snapshot: &'a Snapshot,
+    evidence: &'a [Evidence],
+    duration_ms: u64,
+}
+
+fn write_event(cfg: &WatchConfig, record: &EventRecord<'_>) -> std::io::Result<()> {
     if let Some(parent) = cfg.out.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)?;
         }
     }
 
-    let record = json!({
-        "at_epoch": epoch,
-        "at_local": format_rfc3339(epoch, offset_seconds),
-        "health": health,
-        "reason": reason,
-        "snapshot": snapshot.to_json(),
-        "evidence": evidence,
+    let payload = json!({
+        "schema_version": 2,
+        "event": record.event,
+        "at_epoch": record.epoch,
+        "at_local": format_rfc3339(record.epoch, record.offset_seconds),
+        "health": record.health,
+        "reason": record.reason,
+        "duration_ms": record.duration_ms,
+        "snapshot": record.snapshot.to_json(),
+        "evidence": record.evidence,
     });
 
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&cfg.out)?;
-    writeln!(file, "{}", serde_json::to_string(&record)?)?;
+    writeln!(file, "{}", serde_json::to_string(&payload)?)?;
     file.flush()
+}
+
+/// JSONL とは別に、毎周期の生存記録を 1 ファイルへ上書きする。
+fn heartbeat_path(out: &Path) -> PathBuf {
+    out.with_extension("heartbeat")
+}
+
+fn write_heartbeat(
+    cfg: &WatchConfig,
+    epoch: u64,
+    offset_seconds: i64,
+    cycle: u64,
+    duration_ms: u64,
+    last_event_epoch: u64,
+) -> std::io::Result<()> {
+    let path = heartbeat_path(&cfg.out);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let record = json!({
+        "schema_version": 2,
+        "at_epoch": epoch,
+        "at_local": format_rfc3339(epoch, offset_seconds),
+        "pid": std::process::id(),
+        "cycle": cycle,
+        "duration_ms": duration_ms,
+        "last_event_epoch": last_event_epoch,
+    });
+
+    // 同一ディレクトリ内の rename は atomic。読み手が空ファイルを
+    // 見ることはない。
+    let tmp = path.with_extension(format!("heartbeat.tmp.{}", std::process::id()));
+    {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)?;
+        writeln!(file, "{}", serde_json::to_string(&record)?)?;
+        file.flush()?;
+    }
+    if let Err(err) = fs::rename(&tmp, &path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    Ok(())
+}
+
+/// systemd の `WatchdogSec=` に keep-alive を送る。
+///
+/// `Type=simple` のままでよい。`WatchdogSec=` を設定すると
+/// `NotifyAccess=main` が暗黙に適用される。
+fn notify_watchdog() -> std::io::Result<()> {
+    let Some(socket) = std::env::var_os("NOTIFY_SOCKET") else {
+        return Ok(());
+    };
+    let path = PathBuf::from(socket);
+    // std は抽象名前空間 (先頭が '@') を扱えない。user unit では
+    // 通常 /run/user/<uid>/systemd/notify が渡される。
+    if path.as_os_str().to_string_lossy().starts_with('@') {
+        return Ok(());
+    }
+    let datagram = std::os::unix::net::UnixDatagram::unbound()?;
+    datagram.send_to(b"WATCHDOG=1", &path)?;
+    Ok(())
 }
 
 fn capture(interface: &str) -> Vec<Evidence> {
@@ -315,10 +517,7 @@ fn capture(interface: &str) -> Vec<Evidence> {
     ] {
         let path = format!("/sys/class/net/{}/{}", interface, name);
         if let Ok(value) = fs::read_to_string(&path) {
-            items.push(Evidence {
-                cmd: path,
-                out: truncate_utf8(value.trim_end(), EVIDENCE_LIMIT_BYTES),
-            });
+            items.push(Evidence::sysfs(path, value.trim_end()));
         }
     }
 
@@ -367,29 +566,212 @@ fn run_evidence(args: &[String]) -> Evidence {
             return Evidence {
                 cmd: String::new(),
                 out: "[empty-command]".to_string(),
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: None,
+                signal: None,
+                timed_out: false,
+                elapsed_ms: 0,
             }
         }
     };
 
-    match Command::new(program).args(rest).output() {
-        Ok(output) => {
-            let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.trim().is_empty() {
-                text.push_str("\n[stderr] ");
-                text.push_str(stderr.trim_end());
-            }
-            if !output.status.success() {
-                text.push_str(&format!("\n[exit] {}", output.status));
-            }
+    match run_command(program, rest, CAPTURE_TIMEOUT) {
+        CommandOutcome::Completed {
+            status,
+            stdout,
+            stderr,
+            elapsed,
+        } => {
+            let exit_code = status.code();
+            let signal = status.signal();
             Evidence {
                 cmd: args.join(" "),
-                out: truncate_utf8(&text, EVIDENCE_LIMIT_BYTES),
+                out: summarize(&stdout, &stderr, exit_code, signal),
+                stdout: truncate_utf8(&stdout, EVIDENCE_LIMIT_BYTES),
+                stderr: truncate_utf8(&stderr, EVIDENCE_LIMIT_BYTES),
+                exit_code,
+                signal,
+                timed_out: false,
+                elapsed_ms: elapsed.as_millis() as u64,
             }
         }
-        Err(err) => Evidence {
+        CommandOutcome::TimedOut { elapsed } => Evidence {
             cmd: args.join(" "),
-            out: format!("[spawn-error] {}", err),
+            out: "[timeout]".to_string(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: None,
+            signal: None,
+            timed_out: true,
+            elapsed_ms: elapsed.as_millis() as u64,
+        },
+        CommandOutcome::SpawnFailed { message, elapsed } => Evidence {
+            cmd: args.join(" "),
+            out: format!("[spawn-error] {}", message),
+            stdout: String::new(),
+            stderr: message,
+            exit_code: None,
+            signal: None,
+            timed_out: false,
+            elapsed_ms: elapsed.as_millis() as u64,
+        },
+    }
+}
+
+fn summarize(stdout: &str, stderr: &str, exit_code: Option<i32>, signal: Option<i32>) -> String {
+    let mut text = stdout.to_string();
+    if !stderr.trim().is_empty() {
+        text.push_str("\n[stderr] ");
+        text.push_str(stderr.trim_end());
+    }
+    if let Some(code) = exit_code {
+        if code != 0 {
+            text.push_str(&format!("\n[exit] {}", code));
+        }
+    }
+    if let Some(sig) = signal {
+        text.push_str(&format!("\n[signal] {}", sig));
+    }
+    truncate_utf8(&text, EVIDENCE_LIMIT_BYTES)
+}
+
+/// 外部コマンドの結果。タイムアウトと起動失敗を正常終了から分離する。
+#[derive(Debug)]
+enum CommandOutcome {
+    Completed {
+        status: ExitStatus,
+        stdout: String,
+        stderr: String,
+        elapsed: Duration,
+    },
+    TimedOut {
+        elapsed: Duration,
+    },
+    SpawnFailed {
+        message: String,
+        elapsed: Duration,
+    },
+}
+
+/// パイプを読み、読めた分を逐次送るスレッドを起動する。
+fn spawn_reader<T>(pipe: Option<T>) -> Option<Receiver<Vec<u8>>>
+where
+    T: Read + Send + 'static,
+{
+    pipe.map(|mut pipe| {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = [0u8; 8192];
+            loop {
+                match pipe.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+        rx
+    })
+}
+
+/// 期限内に到着した出力を回収する。
+///
+/// 子が終了しても、パイプを保持した孫プロセスがいると EOF は来ない。
+/// 監視ループを止めないため、回収自体にも期限を設ける。
+fn collect_output(rx: Option<Receiver<Vec<u8>>>, deadline: Instant) -> Vec<u8> {
+    let Some(rx) = rx else {
+        return Vec::new();
+    };
+    let mut buf = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(remaining) {
+            Ok(chunk) => buf.extend_from_slice(&chunk),
+            Err(_) => break,
+        }
+    }
+    buf
+}
+
+/// 子プロセスを上限時間で打ち切り、stdout/stderr を回収する。
+///
+/// `Command::output()` は待ち時間を制限できないため使わない。
+/// パイプを読み切らないと子が終われないので、読み取りは専用
+/// スレッドで行う。
+fn run_command(program: &str, args: &[String], limit: Duration) -> CommandOutcome {
+    let start = Instant::now();
+    let mut child = match Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            return CommandOutcome::SpawnFailed {
+                message: err.to_string(),
+                elapsed: start.elapsed(),
+            }
+        }
+    };
+
+    let out_handle = spawn_reader(child.stdout.take());
+    let err_handle = spawn_reader(child.stderr.take());
+
+    let mut timed_out = false;
+    let mut wait_error = None;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if start.elapsed() >= limit {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break None;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                wait_error = Some(err.to_string());
+                break None;
+            }
+        }
+    };
+
+    let drain_deadline = Instant::now() + DRAIN_LIMIT;
+    let stdout = collect_output(out_handle, drain_deadline);
+    let stderr = collect_output(err_handle, drain_deadline);
+    let elapsed = start.elapsed();
+
+    if timed_out {
+        return CommandOutcome::TimedOut { elapsed };
+    }
+    if let Some(message) = wait_error {
+        return CommandOutcome::SpawnFailed { message, elapsed };
+    }
+    match status {
+        Some(status) => CommandOutcome::Completed {
+            status,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            elapsed,
+        },
+        None => CommandOutcome::SpawnFailed {
+            message: "command returned no status".to_string(),
+            elapsed,
         },
     }
 }
@@ -400,42 +782,76 @@ fn sysfs_value(interface: &str, name: &str) -> Option<String> {
         .map(|v| v.trim().to_string())
 }
 
-fn interface_ipv4(interface: &str) -> Option<String> {
-    let output = Command::new("ip")
-        .args(["-4", "-o", "addr", "show", "dev", interface])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn interface_ipv4(interface: &str, errors: &mut Vec<String>) -> Option<String> {
+    let args = words(&["-4", "-o", "addr", "show", "dev", interface]);
+    match run_command("ip", &args, IP_TIMEOUT) {
+        CommandOutcome::Completed { status, stdout, .. } if status.success() => {
+            parse_ipv4_addr(&stdout)
+        }
+        CommandOutcome::Completed { status, .. } => {
+            errors.push(format!("ip-addr-exit({})", status));
+            None
+        }
+        CommandOutcome::TimedOut { .. } => {
+            errors.push("ip-addr-timeout".to_string());
+            None
+        }
+        CommandOutcome::SpawnFailed { message, .. } => {
+            errors.push(format!("ip-addr-spawn: {}", message));
+            None
+        }
     }
-    parse_ipv4_addr(&String::from_utf8_lossy(&output.stdout))
 }
 
-fn default_gateway() -> Option<String> {
-    let output = Command::new("ip")
-        .args(["-4", "route", "show", "default"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn default_gateway(errors: &mut Vec<String>) -> Option<String> {
+    let args = words(&["-4", "route", "show", "default"]);
+    match run_command("ip", &args, IP_TIMEOUT) {
+        CommandOutcome::Completed { status, stdout, .. } if status.success() => {
+            parse_default_gateway(&stdout)
+        }
+        CommandOutcome::Completed { status, .. } => {
+            errors.push(format!("ip-route-exit({})", status));
+            None
+        }
+        CommandOutcome::TimedOut { .. } => {
+            errors.push("ip-route-timeout".to_string());
+            None
+        }
+        CommandOutcome::SpawnFailed { message, .. } => {
+            errors.push(format!("ip-route-spawn: {}", message));
+            None
+        }
     }
-    parse_default_gateway(&String::from_utf8_lossy(&output.stdout))
 }
 
-fn ping_ok(target: &str) -> bool {
-    Command::new("ping")
-        .args(["-n", "-c", "1", "-W", "1", target])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+fn ping_ok(target: &str, errors: &mut Vec<String>) -> bool {
+    let args = words(&["-n", "-c", "1", "-W", "1", target]);
+    match run_command("ping", &args, PING_TIMEOUT) {
+        CommandOutcome::Completed { status, .. } => status.success(),
+        CommandOutcome::TimedOut { .. } => {
+            errors.push(format!("ping-timeout({})", target));
+            false
+        }
+        CommandOutcome::SpawnFailed { message, .. } => {
+            errors.push(format!("ping-spawn: {}", message));
+            false
+        }
+    }
 }
 
-fn resolver_ok(host: &str) -> bool {
-    Command::new("getent")
-        .args(["ahostsv4", host])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+fn resolver_ok(host: &str, errors: &mut Vec<String>) -> bool {
+    let args = words(&["ahostsv4", host]);
+    match run_command("getent", &args, DNS_TIMEOUT) {
+        CommandOutcome::Completed { status, .. } => status.success(),
+        CommandOutcome::TimedOut { .. } => {
+            errors.push("dns-timeout".to_string());
+            false
+        }
+        CommandOutcome::SpawnFailed { message, .. } => {
+            errors.push(format!("getent-spawn: {}", message));
+            false
+        }
+    }
 }
 
 fn tcp_ok(addr: &str) -> bool {
@@ -494,9 +910,10 @@ fn now_epoch() -> u64 {
 }
 
 fn local_utc_offset() -> String {
-    match Command::new("date").arg("+%:z").output() {
-        Ok(output) if output.status.success() => {
-            let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let args = words(&["+%:z"]);
+    match run_command("date", &args, DATE_TIMEOUT) {
+        CommandOutcome::Completed { status, stdout, .. } if status.success() => {
+            let value = stdout.trim().to_string();
             if value.len() == 6 {
                 value
             } else {
@@ -577,6 +994,7 @@ mod tests {
     ) -> Snapshot {
         Snapshot {
             interface: "enp4s0".to_string(),
+            interface_present: true,
             carrier,
             operstate: "up".to_string(),
             speed_mbps: Some("1000".to_string()),
@@ -589,6 +1007,8 @@ mod tests {
             dns_ok,
             tcp_ok,
             direct_tcp_ok: tcp_ok,
+            probe_errors: Vec::new(),
+            measurement_failed: false,
         }
     }
 
@@ -728,5 +1148,163 @@ mod tests {
     fn test_default_log_path_is_absolute_or_relative_file() {
         let path = default_log_path();
         assert!(path.to_string_lossy().ends_with("net-watch.jsonl"));
+    }
+
+    #[test]
+    fn test_health_unknown_on_measurement_failure() {
+        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        snap.measurement_failed = true;
+        snap.probe_errors.push("dns-timeout".to_string());
+        assert_eq!(snap.health(), Health::Unknown);
+        assert_eq!(snap.reason(), "dns-timeout");
+    }
+
+    #[test]
+    fn test_health_interface_missing() {
+        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        snap.interface_present = false;
+        assert_eq!(snap.health(), Health::Down);
+        assert_eq!(snap.reason(), "interface-missing");
+    }
+
+    #[test]
+    fn test_interface_exists() {
+        assert!(interface_exists("lo"));
+        assert!(!interface_exists("definitely-not-an-interface"));
+        assert!(!interface_exists(""));
+        assert!(!interface_exists("../lo"));
+        assert!(!interface_exists("."));
+        assert!(!interface_exists(".."));
+    }
+
+    #[test]
+    fn test_run_rejects_missing_interface() {
+        let cfg = WatchConfig {
+            interface: "definitely-not-an-interface".to_string(),
+            interval: Duration::from_secs(1),
+            out: std::env::temp_dir().join("system-diag-unused.jsonl"),
+            once: true,
+            quiet: true,
+        };
+        let err = run(&cfg).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_heartbeat_path() {
+        assert_eq!(
+            heartbeat_path(Path::new("/tmp/net-watch.jsonl")),
+            PathBuf::from("/tmp/net-watch.heartbeat")
+        );
+    }
+
+    #[test]
+    fn test_run_command_timeout() {
+        let outcome = run_command("/bin/sleep", &["2".to_string()], Duration::from_millis(100));
+        match outcome {
+            CommandOutcome::TimedOut { elapsed } => {
+                assert!(elapsed >= Duration::from_millis(100));
+                assert!(elapsed < Duration::from_secs(2));
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_run_command_completed() {
+        let outcome = run_command(
+            "/bin/sh",
+            &[
+                "-c".to_string(),
+                "echo out; echo err >&2; exit 3".to_string(),
+            ],
+            Duration::from_secs(2),
+        );
+        match outcome {
+            CommandOutcome::Completed {
+                status,
+                stdout,
+                stderr,
+                ..
+            } => {
+                assert_eq!(stdout, "out\n");
+                assert_eq!(stderr, "err\n");
+                assert_eq!(status.code(), Some(3));
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_run_command_spawn_failed() {
+        let outcome = run_command("/nonexistent/command", &[], Duration::from_secs(1));
+        match outcome {
+            CommandOutcome::SpawnFailed { .. } => {}
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_run_command_bounds_inherited_pipe() {
+        // 子 (sh) は即終了するが、孫 (sleep) が stdout を保持し続ける。
+        // EOF 待ちで監視ループが止まらないことを確認する。
+        let outcome = run_command(
+            "/bin/sh",
+            &["-c".to_string(), "sleep 2 & echo hi".to_string()],
+            Duration::from_secs(5),
+        );
+        match outcome {
+            CommandOutcome::Completed {
+                stdout, elapsed, ..
+            } => {
+                assert_eq!(stdout, "hi\n");
+                assert!(
+                    elapsed < Duration::from_millis(1500),
+                    "elapsed too long: {:?}",
+                    elapsed
+                );
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_run_command_large_output_does_not_deadlock() {
+        let outcome = run_command(
+            "/bin/sh",
+            &["-c".to_string(), "yes x | head -c 200000".to_string()],
+            Duration::from_secs(5),
+        );
+        match outcome {
+            CommandOutcome::Completed { status, stdout, .. } => {
+                assert!(status.success());
+                assert_eq!(stdout.len(), 200_000);
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_write_heartbeat_is_valid_json() {
+        let dir = std::env::temp_dir().join(format!("system-diag-test-{}", std::process::id()));
+        let out = dir.join("net-watch.jsonl");
+        let cfg = WatchConfig {
+            interface: "lo".to_string(),
+            interval: Duration::from_secs(5),
+            out: out.clone(),
+            once: false,
+            quiet: true,
+        };
+
+        write_heartbeat(&cfg, 1_700_000_000, 32_400, 7, 42, 1_699_999_999).unwrap();
+
+        let text = std::fs::read_to_string(heartbeat_path(&out)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(value["schema_version"], json!(2));
+        assert_eq!(value["cycle"], json!(7));
+        assert_eq!(value["duration_ms"], json!(42));
+        assert_eq!(value["last_event_epoch"], json!(1_699_999_999_u64));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
