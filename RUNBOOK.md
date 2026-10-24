@@ -152,6 +152,8 @@ AdGuard CLI v1.4.13 の透過プロキシは `CLOSE-WAIT` を解放せず、
 
 ### 5.3 上流・コミュニティ調査（2026-10-21）
 
+（2026-10-24 追記: v1.5.0 stable が公開済み。判断は 5.4 を参照）
+
 今回の `CLOSE-WAIT` 蓄積と accept queue 飽和について、
 公開情報を「公式」「コミュニティ」「推測」に分けて整理した。
 
@@ -220,6 +222,57 @@ AdGuard CLI v1.4.13 の透過プロキシは `CLOSE-WAIT` を解放せず、
 - Reddit limited connectivity:
   <https://www.reddit.com/r/Adguard/comments/1vwc9jw/fix_limited_connectivity_connected_site_only_in/>
 - Official community: <https://adguard.com/discuss.html>
+
+### 5.4 決定: v1.5.0 へ更新（2026-10-24）
+
+2026-10-24 15:50 時点の `adguard-cli --version` は v1.4.13 だが、
+CLI が `v1.5.0 is now available` を表示した。stable が公開された
+ため、rc ではなく v1.5.0 stable へ更新する。
+
+同時刻の実機証跡:
+
+- `adguard_root_he` が 2 日以上 `Z`（defunct）のまま残存。
+  親の `adguard-cli`（PID 142512）が reap していない。
+- `journalctl -u adguard-cli` に
+  `Failed to protect socket: Failed to send command to root helper`。
+- これは #136（defunct root helper）と同じ機構で、v1.5.0 に
+  修正が含まれる可能性が高い。
+
+手順:
+
+```bash
+# 設定の退避
+cp -a ~/.local/share/adguard-cli \
+  ~/.local/share/adguard-cli.bak-$(date +%Y%m%d)
+# 更新（root が必要）
+sudo adguard-cli update
+# watchdog のタイムアウトを 150 秒へ反映
+sudo ./contrib/adguard-watchdog/install.sh
+```
+
+更新後の確認:
+
+```bash
+adguard-cli --version
+systemctl status adguard-cli --no-pager
+MAIN=$(systemctl show -p MainPID --value adguard-cli)
+ps -o pid,ppid,stat,comm --ppid "$MAIN"
+journalctl -u adguard-cli --since '-10 min' | grep -i 'root helper'
+```
+
+判定:
+
+- helper が `S`（sleep）で `Z` でないこと。
+- `Failed to send command to root helper` が再出現しないこと。
+- 1 時間ほど `watch` のログと
+  `ss -tan state close-wait` を確認する。
+
+再発した場合の次の手段:
+
+1. `proxy.yaml` の `filtered_ports` から 443 を外す。
+   例: `80:442,444:5221,5300:49151`（構文は実機で確認する）。
+   HTTPS フィルタは無効になる。
+2. `proxy_mode` を `manual` に落とす。system-wide の透過は無効。
 
 ## 6. 参考（2026-10 時点の実測）
 
