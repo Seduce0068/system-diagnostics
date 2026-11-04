@@ -15,12 +15,15 @@
 | ID | 内容 | 復旧させる層 |
 | --- | --- | --- |
 | H1 | PC 側 NIC（r8168）の内部ハング | PC 側でリンク再交渉 |
-| H2 | HR02 の PC 個別転送の破綻 | ルーターの再起動 |
+| H2 | HR02 のハング（LAN ポート停止を含む） | ルーターの電源再投入 |
 | H3 | AdGuard CLI の透過プロキシ故障 | プロキシの停止または再起動 |
 
 2026-10-20 の事象では、ICMP と DNS は通るのに新規 TCP だけが
 失敗した。443 は AdGuard CLI の透過プロキシ経由なので、H3 を
 最初に切り分ける。H3 は 2026-10-21 に確定した（6 章参照）。
+
+2026-11-04 の事象は H2 で、PC 側のリンク断はその症状だった。
+H1 は 2026-11-04 時点で未確定（6 章参照）。
 
 ## 3. 初動（ルーターに触る前に層を判定する）
 
@@ -57,7 +60,20 @@ sudo systemctl start adguard-cli
 443 が通るようになれば H3 確定。DNS フィルタは AdGuard Home が
 継続するため、停止中も DNS レベルのブロックは維持される。
 
-### 3.3 NIC の再交渉
+### 3.3 リンク層の確認と NIC の再交渉
+
+まず L1（キャリア）を確認する。
+
+```bash
+ip -s link show enp4s0    # NO-CARRIER / operstate
+ethtool enp4s0 | grep -E 'Link detected|Speed|Duplex'
+```
+
+- `Link detected: no`（`NO-CARRIER`）: PC とルーター間の物理リンクが
+  落ちている。ケーブルとルーターの LAN ポートを確認し、ルーターの
+  電源を再投入する。NIC の再交渉だけでは直らないことが多い
+  （2026-11-04 は電源再投入で復旧した）。
+- `Link detected: yes` で L3 が不通: 次の中継を行う。
 
 ```bash
 sudo ip link set enp4s0 down
@@ -74,7 +90,7 @@ ping -c 3 8.8.8.8               # 上位網（NAT 越え）
 getent ahostsv4 www.google.com  # DNS 解決
 ```
 
-- 復旧した場合: H1 確定。`5. 恒久対策` へ進む。
+- 復旧した場合: H1 の可能性が高い。`5.1` の判定条件を確認する。
 - 復旧しない場合: H2 の可能性。ルーターの電源を 10 分以上
   切って再投入する。
 
@@ -116,9 +132,22 @@ heartbeat の mtime と `systemctl --user status` を確認する。
 
 ## 5. 恒久対策
 
-### 5.1 H1 確定後
+### 5.1 H1 の扱い（2026-11-04 時点で未確定）
 
-out-of-tree の `r8168` を撤去し、カーネル同梱の `r8169` に戻す。
+`r8168` の `Device reseting!` は、これまでサスペンド復帰時
+（`PM: suspend exit` と同時）にのみ発生している。2026-11-04 の
+リンク断はルーターの電源再投入で復旧し、rx/tx エラーも 0 だった
+ため H1 ではない。
+
+H1 と判断する条件:
+
+- ルーターの電源再投入でも復旧せず、PC 側のリンク再交渉や
+  ドライバ再読み込みで復旧する。
+- `Device reseting!` がサスペンドと無関係に発生する。
+- rx_errors / rx_dropped / PCIe/AER エラーが増加する。
+
+H1 と判断した場合のみ、out-of-tree の `r8168` を撤去し、
+カーネル同梱の `r8169` に戻す。
 
 ```bash
 sudo apt purge r8168-dkms
@@ -127,6 +156,7 @@ ethtool -i enp4s0    # driver: r8169 を確認
 ```
 
 ロールバックする場合は `sudo apt install r8168-dkms`。
+移行後は `watch` で `carrier-down` と `Device reseting!` を観察する。
 
 ### 5.2 H3 確定後（2026-10-21）
 
@@ -296,7 +326,7 @@ journalctl -u adguard-cli --since '-10 min' | grep -i 'root helper'
 - 継続監視: `CLOSE_WAIT` 件数と `Route loop detected`
   （更新前から存在する 127.0.0.1:8000 宛ての警告）。
 
-## 6. 参考（2026-10 時点の実測）
+## 6. 参考（2026-10〜11 の実測）
 
 - NIC: `10ec:8168` rev 15、ドライバ `r8168` 8.055.00（DKMS）。
 - スリープ復帰のたびに `Device reseting!` とリンク再交渉が発生。
@@ -363,3 +393,31 @@ journalctl -u adguard-cli --since '-10 min' | grep -i 'root helper'
 - 導入済み watchdog unit は `TimeoutStartSec=60` のまま。
   `sudo ./contrib/adguard-watchdog/install.sh` を再実行して
   150 秒へ更新する。
+
+### 2026-11-04 のリンク断（ルーター側）
+
+- 22:28:38 に `r8168: enp4s0: link down`。23:18:18 に `link up`。
+  復帰はルーターの電源ケーブルを外して再投入した操作による。
+- 22:28:41 の watch は `health=down`、`reason=carrier-down`。
+  `ip -s link` は `NO-CARRIER`、`operstate=down`、`speed=-1`。
+  rx_errors / rx_dropped / collisions はすべて 0。
+- 22:28:41 の `ip neigh` は
+  `192.168.128.1 ... INCOMPLETE`。23:20:07 には同じ MAC
+  `fc:00:1d:d0:6b:a5` で `REACHABLE`。ルーター機器自体は
+  変わっておらず、再起動で復旧した。
+- 22:28 にサスペンドはない。`Device reseting!` は
+  11/1 12:48、11/2 19:36、11/3 13:33、11/4 18:53 の
+  レジューム時のみで、いずれも `PM: suspend exit` と同時。
+  PCIe/AER エラーもない。
+- 23:18:18 のリンク復帰後、DHCP は 45 秒で一度失敗し、
+  23:20:03 にリースを取得した。2026-10-20/21 のルーター
+  再投入時と同じ経過。
+- AdGuard は同時刻に root helper エラー 0 件、`CLOSE_WAIT` 0 件。
+  H3 ではない。
+
+判定の使い分け:
+
+- `carrier-down` と kernel の `link down`: PC とルーター間の
+  物理リンク。ケーブル、ルーターの電源・LAN ポートを疑う。
+- carrier が上がったまま `tcp-failed` で
+  `direct_tcp_ok=true`: AdGuard CLI の透過プロキシ故障（H3）。
