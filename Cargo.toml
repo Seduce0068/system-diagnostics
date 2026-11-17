@@ -13,3 +13,12 @@ clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.30", features = ["full"] }
 libc = "0.2"
 thiserror = "2.0.18"
+
+[profile.release]
+strip = true
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
