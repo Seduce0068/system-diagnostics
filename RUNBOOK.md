@@ -87,7 +87,7 @@ sleep 10
 疎通を確認する。
 
 ```bash
-ping -c 3 192.168.128.1         # ゲートウェイ（L3 到達性）
+ping -c 3 192.0.2.1         # ゲートウェイ（L3 到達性）
 ping -c 3 8.8.8.8               # 上位網（NAT 越え）
 getent ahostsv4 www.google.com  # DNS 解決
 ```
@@ -284,7 +284,7 @@ sudo ./contrib/adguard-watchdog/install.sh
 
 注意: `sudo adguard-cli update` は installer が `/opt/adguard-cli` の
 所有者変更を `/dev/tty` で確認するため、非対話環境では失敗する。
-`/opt/adguard-cli` がサービスユーザー `koppe` の所有であることを
+`/opt/adguard-cli` がサービスユーザー `<user>` の所有であることを
 確認し、`sudo` を付けずに `adguard-cli update` を実行する。
 SUID helper は installer が直接上書きせず、`.new` として配置され、
 再起動時に本体へ置き換わる。
@@ -479,8 +479,8 @@ S5.A2.00 でも再発しているため、残る候補を次の順で疑う。
   `ip -s link` は `NO-CARRIER`、`operstate=down`、`speed=-1`。
   rx_errors / rx_dropped / collisions はすべて 0。
 - 22:28:41 の `ip neigh` は
-  `192.168.128.1 ... INCOMPLETE`。23:20:07 には同じ MAC
-  `fc:00:1d:d0:6b:a5` で `REACHABLE`。ルーター機器自体は
+  `192.0.2.1 ... INCOMPLETE`。23:20:07 には同じ MAC
+  `02:00:00:00:00:01` で `REACHABLE`。ルーター機器自体は
   変わっておらず、再起動で復旧した。
 - 22:28 にサスペンドはない。`Device reseting!` は
   11/1 12:48、11/2 19:36、11/3 13:33、11/4 18:53 の

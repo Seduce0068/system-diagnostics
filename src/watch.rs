@@ -1000,7 +1000,7 @@ mod tests {
             speed_mbps: Some("1000".to_string()),
             mtu: Some("1280".to_string()),
             ipv4: ipv4.map(|v| v.to_string()),
-            gateway: Some("192.168.128.1".to_string()),
+            gateway: Some("192.0.2.1".to_string()),
             default_route,
             gateway_reachable,
             internet_reachable,
@@ -1014,7 +1014,7 @@ mod tests {
 
     #[test]
     fn test_health_all_ok() {
-        let snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        let snap = snapshot(true, Some("192.0.2.111"), true, true, true, true, true);
         assert_eq!(snap.health(), Health::Ok);
         assert_eq!(snap.reason(), "ok");
     }
@@ -1023,7 +1023,7 @@ mod tests {
     fn test_health_carrier_down() {
         let snap = snapshot(
             false,
-            Some("192.168.128.111"),
+            Some("192.0.2.111"),
             true,
             false,
             false,
@@ -1045,7 +1045,7 @@ mod tests {
     fn test_health_degraded_gateway_unreachable() {
         let snap = snapshot(
             true,
-            Some("192.168.128.111"),
+            Some("192.0.2.111"),
             true,
             false,
             false,
@@ -1058,14 +1058,14 @@ mod tests {
 
     #[test]
     fn test_health_degraded_upstream_only() {
-        let snap = snapshot(true, Some("192.168.128.111"), true, true, false, true, true);
+        let snap = snapshot(true, Some("192.0.2.111"), true, true, false, true, true);
         assert_eq!(snap.health(), Health::Degraded);
         assert_eq!(snap.reason(), "internet-unreachable");
     }
 
     #[test]
     fn test_health_degraded_dns_only() {
-        let snap = snapshot(true, Some("192.168.128.111"), true, true, true, false, true);
+        let snap = snapshot(true, Some("192.0.2.111"), true, true, true, false, true);
         assert_eq!(snap.health(), Health::Degraded);
         assert_eq!(snap.reason(), "dns-failed");
     }
@@ -1073,7 +1073,7 @@ mod tests {
     #[test]
     fn test_health_degraded_proxy_tcp_only() {
         // 直接 TCP は成功し、プロキシ経由の TCP だけ失敗する場合。
-        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        let mut snap = snapshot(true, Some("192.0.2.111"), true, true, true, true, true);
         snap.tcp_ok = false;
         assert_eq!(snap.health(), Health::Degraded);
         assert_eq!(snap.reason(), "tcp-failed");
@@ -1082,7 +1082,7 @@ mod tests {
     #[test]
     fn test_health_degraded_direct_tcp_only() {
         // プロキシ経由の TCP は成功し、直接 TCP だけ失敗する場合。
-        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        let mut snap = snapshot(true, Some("192.0.2.111"), true, true, true, true, true);
         snap.direct_tcp_ok = false;
         assert_eq!(snap.health(), Health::Degraded);
         assert_eq!(snap.reason(), "direct-tcp-failed");
@@ -1091,10 +1091,10 @@ mod tests {
     #[test]
     fn test_parse_default_gateway() {
         let output =
-            "default via 192.168.128.1 dev enp4s0 proto dhcp src 192.168.128.111 metric 100 \n";
+            "default via 192.0.2.1 dev enp4s0 proto dhcp src 192.0.2.111 metric 100 \n";
         assert_eq!(
             parse_default_gateway(output),
-            Some("192.168.128.1".to_string())
+            Some("192.0.2.1".to_string())
         );
         assert_eq!(parse_default_gateway(""), None);
     }
@@ -1102,8 +1102,8 @@ mod tests {
     #[test]
     fn test_parse_ipv4_addr() {
         let output =
-            "2: enp4s0    inet 192.168.128.111/24 brd 192.168.128.255 scope global dynamic enp4s0\n";
-        assert_eq!(parse_ipv4_addr(output), Some("192.168.128.111".to_string()));
+            "2: enp4s0    inet 192.0.2.111/24 brd 192.0.2.255 scope global dynamic enp4s0\n";
+        assert_eq!(parse_ipv4_addr(output), Some("192.0.2.111".to_string()));
         assert_eq!(
             parse_ipv4_addr("2: enp4s0    inet6 fe80::1/64 scope link\n"),
             None
@@ -1152,7 +1152,7 @@ mod tests {
 
     #[test]
     fn test_health_unknown_on_measurement_failure() {
-        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        let mut snap = snapshot(true, Some("192.0.2.111"), true, true, true, true, true);
         snap.measurement_failed = true;
         snap.probe_errors.push("dns-timeout".to_string());
         assert_eq!(snap.health(), Health::Unknown);
@@ -1161,7 +1161,7 @@ mod tests {
 
     #[test]
     fn test_health_interface_missing() {
-        let mut snap = snapshot(true, Some("192.168.128.111"), true, true, true, true, true);
+        let mut snap = snapshot(true, Some("192.0.2.111"), true, true, true, true, true);
         snap.interface_present = false;
         assert_eq!(snap.health(), Health::Down);
         assert_eq!(snap.reason(), "interface-missing");

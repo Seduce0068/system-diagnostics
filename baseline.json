@@ -5,15 +5,15 @@
     "top_destinations": [
       {
         "count": 75,
-        "ip": "192.168.128.111"
+        "ip": "192.0.2.111"
       },
       {
         "count": 21,
-        "ip": "34.128.128.0"
+        "ip": "198.51.100.0"
       },
       {
         "count": 12,
-        "ip": "199.232.193.91"
+        "ip": "203.0.113.91"
       }
     ]
   },
@@ -79,7 +79,7 @@
     "name": "DNS Latency"
   },
   "Local Gateway Ping": {
-    "gateway": "192.168.128.1",
+    "gateway": "192.0.2.1",
     "interface": "enp4s0",
     "name": "Local Gateway Ping",
     "packet_loss": "0%",
