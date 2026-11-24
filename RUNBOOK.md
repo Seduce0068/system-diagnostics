@@ -263,8 +263,8 @@ CLI が `v1.5.0 is now available` を表示した。stable が公開された
 
 同時刻の実機証跡:
 
-- `adguard_root_he` が 2 日以上 `Z`（defunct）のまま残存。
-  親の `adguard-cli`（PID 142512）が reap していない。
+- `<root-helper>` が 2 日以上 `Z`（defunct）のまま残存。
+  親の `adguard-cli`（PID <pid>）が reap していない。
 - `journalctl -u adguard-cli` に
   `Failed to protect socket: Failed to send command to root helper`。
 - これは #136（defunct root helper）と同じ機構で、v1.5.0 に
@@ -420,7 +420,7 @@ S5.A2.00 でも再発しているため、残る候補を次の順で疑う。
   `direct_tcp_ok=true`。直接 TCP（53）は正常で、AdGuard 経由の
   443 だけが失敗した。
 - 障害時の実測:
-  - 透過プロキシの待受 `127.0.0.1:42667` が
+  - 透過プロキシの待受 `127.0.0.1:<listen-port>` が
     `Recv-Q=129 / Send-Q=128`（上限 128）で飽和。
   - `CLOSE-WAIT` が 176〜177 件。
   - `TcpExtListenOverflows` / `TcpExtListenDrops` が
@@ -461,7 +461,7 @@ S5.A2.00 でも再発しているため、残る候補を次の順で疑う。
 
 ### 2026-10-27 の同型停止
 
-- 火曜 21:26:27 に `r8168: enp4s0: link down`、22:05:26 に
+- 火曜 <時刻1> に `r8168: <nic>: link down`、<時刻2> に
   `link up`。39 分の停止。
 - 22:05:26 のリンク復帰後、DHCP は 22:06:16 に
   `ip-config-unavailable`、22:06:56 にリースを取得した。
@@ -479,8 +479,8 @@ S5.A2.00 でも再発しているため、残る候補を次の順で疑う。
   `ip -s link` は `NO-CARRIER`、`operstate=down`、`speed=-1`。
   rx_errors / rx_dropped / collisions はすべて 0。
 - 22:28:41 の `ip neigh` は
-  `192.0.2.1 ... INCOMPLETE`。23:20:07 には同じ MAC
-  `02:00:00:00:00:01` で `REACHABLE`。ルーター機器自体は
+  `192.0.2.1 ... INCOMPLETE`。<時刻3> には同じ MAC
+  `<MAC>` で `REACHABLE`。ルーター機器自体は
   変わっておらず、再起動で復旧した。
 - 22:28 にサスペンドはない。`Device reseting!` は
   11/1 12:48、11/2 19:36、11/3 13:33、11/4 18:53 の
@@ -491,7 +491,7 @@ S5.A2.00 でも再発しているため、残る候補を次の順で疑う。
   再投入時と同じ経過。
 - AdGuard は同時刻に root helper エラー 0 件、`CLOSE_WAIT` 0 件。
   H3 ではない。
-- 2026-11-05 時点で、ルーターは S5.A2.00（最新）かつ
+- 2026-11-05 時点で、ルーターは <firmware>（最新）かつ
   自動更新有効。`newSoftware = 1` は更新画面で再確認する。
 
 2026-11-05 の追加証言:

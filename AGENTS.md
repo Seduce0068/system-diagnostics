@@ -41,4 +41,4 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-CI は `onoderakeita/workflows/rust-gates.yml@v1` に委譲している。
+CI は `Seduce0068/workflows/rust-gates.yml@v1` に委譲している。
